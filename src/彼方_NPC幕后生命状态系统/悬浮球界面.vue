@@ -510,9 +510,7 @@
                         <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
                         <span class="bf-toggle-text">流式输出</span>
                       </label>
-                      <div class="bf-hint">请求走酒馆服务器转发，不会遇到跨域(CORS)问题</div>
-                      <div class="bf-hint">关闭流式则等整段返回</div>
-                      <div class="bf-hint">「最大输出Token」参考模型页上限，NPC 多时调大</div>
+                      <div class="bf-hint">请求走酒馆服务器转发，不会遇到跨域(CORS)问题；关闭流式则等整段返回</div>
                       <div class="bf-row">
                         <span class="bf-label">配置预设</span>
                         <input v-model="presetName" class="bf-input" placeholder="预设名，如 DeepSeek" @keyup.enter="saveApiPreset" />

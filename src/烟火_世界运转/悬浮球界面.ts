@@ -1,5 +1,6 @@
 import { useHost } from './host';
 import { pinia } from './pinia';
+import { 层序, 悬浮球直径 } from './主题';
 import 悬浮球界面 from './悬浮球界面.vue';
 import { createApp } from 'vue';
 
@@ -40,13 +41,14 @@ $(() => {
       position: 'fixed',
       left: '0px',
       top: '0px',
-      width: '40px',
-      height: '40px',
+      // 球直径与层序都从 主题.ts 取(以前这里是手抄的 40px 与 2147483000)
+      width: `${悬浮球直径}px`,
+      height: `${悬浮球直径}px`,
       border: 'none',
       outline: 'none',
       boxShadow: 'none',
       pointerEvents: 'auto',
-      zIndex: '2147483000',
+      zIndex: String(层序.球iframe),
     })
     .appendTo('body');
   $app.on('load', () => {

@@ -5,6 +5,7 @@ import { captureConsole, STORAGE_KEY, useDebugStore, useStateStore } from './sta
 import { updateWorld } from './update';
 import { syncWorldbookEntry } from './inject';
 import { useHost } from './host';
+import { 有世界数据 } from './世界数据';
 import './悬浮球界面';
 
 // 消息事件回调与 console 捕获都在组件外使用 pinia store, 必须先激活 pinia 实例再捕获
@@ -55,23 +56,30 @@ async function handleMessageReceived(message_id: number) {
     }
   }
   await updateWorld();
+  // 真的推进成功, 才取消待处理的"删楼后重新对齐"——推进本身会把世界与注入同步到最新。
+  // updateWorld 抛错时这里不执行, 那次重新对齐仍会在 2 秒后补上, 面板不会停在已删楼层的数据上。
+  clearPendingRefresh();
+}
+
+// 删楼后的"重新对齐"待处理项: 2 秒内真来了新回复(regenerate/重roll)就没必要再对齐一次。
+// 但"取消"要等到**确认会推进**之后才做——总开关关/自动更新关/消息读不到/隐藏楼层/正文过短/频率没到
+// 都会提前返回, 那时若已经取消, 这次重新对齐就被永久吞掉, 面板继续显示已删楼层的数据。
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+function clearPendingRefresh() {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
+}
+function refreshAfterFloorChange() {
+  useStateStore().reload();
 }
 
 $(() => {
   // 状态快照存在楼层变量里, 随楼层存亡——删除楼层/重roll(新swipe页没有快照)时世界自动回退,
   // 楼层被编辑时由楼层hash校验作废。因此事件处理只剩"刷新界面与世界书注入":
-  // - MESSAGE_DELETED 延迟刷新: 若 2 秒内收到新消息(regenerate/重roll)则取消;
+  // - MESSAGE_DELETED 延迟 2 秒刷新: 只有当新回复**真的推进了**才取消;
   // - MESSAGE_SWIPED(切分支): 切回旧swipe页会恢复该页当时的快照, 刷新即可。
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-  function clearPendingRefresh() {
-    if (refreshTimer) {
-      clearTimeout(refreshTimer);
-      refreshTimer = null;
-    }
-  }
-  function refreshAfterFloorChange() {
-    useStateStore().reload();
-  }
   // 推进防抖: 正文流式/重 roll 时可能短时间连发多条 MESSAGE_RECEIVED,
   // 只对最后一条触发推进(前面的楼层会被 updateWorld 的"最近 N 条"一并读到, 不丢上下文)
   let tickTimer: ReturnType<typeof setTimeout> | null = null;
@@ -82,8 +90,8 @@ $(() => {
     }
   }
   useHost().events.onMessageReceived((message_id: number) => {
-    // 重roll/regenerate 的新消息到达: 取消待处理的删除刷新(推进完成后会自然同步)
-    clearPendingRefresh();
+    // 注意: 这里**不**取消待处理的删除刷新——那件事挪到"确认会推进"之后做(见 handleMessageReceived 末尾)。
+    // 在这里无条件取消, 会让"删楼后 2 秒内来一条过短/隐藏的回复"把这次重新对齐永久吞掉。
     // 防抖: 短时间连发(重roll/群聊连出)时只推进最后一条, 前面的楼层会被"最近 N 条"一并读到
     clearPendingTick();
     tickTimer = setTimeout(() => {
@@ -121,7 +129,8 @@ $(() => {
       const store = useStateStore();
       const meta = useHost().vars.get({ type: 'chat' })?.[STORAGE_KEY];
       const hasSnapshots = Array.isArray(meta?.快照楼层) && meta.快照楼层.length > 0;
-      const looksEmpty = !store.data.世界.时间 && store.data.事件.length === 0;
+      // 判据与面板空态、注入闸门同一份(以前这里只查「时间」与「事件」两项, 是最弱的一份)
+      const looksEmpty = !有世界数据(store.data);
       if (hasSnapshots && looksEmpty) {
         store.reload();
         console.info('[烟火] 聊天就绪后补读世界快照');

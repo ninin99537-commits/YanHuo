@@ -366,14 +366,16 @@ export function writeStateSnapshot(data: WorldData, anchorFloor: number, process
   return true;
 }
 
-/** 保存当前世界状态(界面手动编辑用): 以最新楼层为锚点写入快照, 不改变「已推进到哪」的进度 */
-export function saveData(data: WorldData) {
+/** 保存当前世界状态(界面手动编辑用): 以最新楼层为锚点写入快照, 不改变「已推进到哪」的进度。
+ *  返回是否真的写进了楼层——写不进去(楼层已被删除、锚点取不到)时界面要如实说, 不能报"已保存"。 */
+export function saveData(data: WorldData): boolean {
   try {
     const anchor = useHost().chat.lastMessageId();
-    writeStateSnapshot(data, anchor, typeof data.处理到楼层 === 'number' ? data.处理到楼层 : 0, false);
+    return writeStateSnapshot(data, anchor, typeof data.处理到楼层 === 'number' ? data.处理到楼层 : 0, false);
   } catch (error) {
     console.error('[烟火] 保存世界状态失败:', error);
     toastError(`烟火: 保存失败 ${error instanceof Error ? error.message : String(error)}`, '烟火');
+    return false;
   }
 }
 

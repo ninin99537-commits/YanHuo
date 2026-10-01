@@ -2,6 +2,7 @@ import { useHost } from './host';
 import { buildInjectionPrompt } from './prompts';
 import type { Settings, WorldData } from './schema';
 import { WORLDBOOK_ENTRY_NAME } from './state';
+import { 有世界数据 } from './世界数据';
 import { toastWarning } from './toast';
 
 function isYanhuoEntry(entry: any): boolean {
@@ -41,19 +42,9 @@ export async function syncWorldbookEntry(data: WorldData, enabled: boolean, sett
       }
       return;
     }
-    // 五层档案(地域/大势/伏笔/节令/指标)也算世界已有数据——否则只推了五层还没长事件时会被误判"世界为空"误删条目
-    const hasWorld = Boolean(
-      data.世界.时间 ||
-        data.世界.总览 ||
-        data.事件.length > 0 ||
-        Object.keys(data.势力).length > 0 ||
-        Object.keys(data.地域 ?? {}).length > 0 ||
-        Object.keys(data.大势 ?? {}).length > 0 ||
-        (data.伏笔 ?? []).length > 0 ||
-        (data.节令 ?? []).length > 0 ||
-        Object.keys(data.指标 ?? {}).length > 0,
-    );
-    if (!enabled || !hasWorld) {
+    // 五层档案(地域/大势/伏笔/节令/指标)也算世界已有数据——否则只推了五层还没长事件时会被误判"世界为空"误删条目。
+    // 这条判据与面板空态、启动补读共用同一份(以前三个地方各抄一遍, 抄歪一次就误删条目)。
+    if (!enabled || !有世界数据(data)) {
       await useHost().worldbook.remove(wbName, isYanhuoEntry);
       return;
     }

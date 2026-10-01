@@ -3,6 +3,7 @@ import { EVENT_SCALE, EVENT_SECRECY, EVENT_SPREAD, EVENT_STAGE, METRIC_TREND, SE
 import { getSettings } from './settings';
 import { clearAllData, emptyData, ENDED_EVENT_LIMIT, EVENT_LIMIT, FACTION_LIMIT, METRIC_LIMIT, OCCASION_LIMIT, REGION_LIMIT, saveData, SEED_LIMIT, TREND_LIMIT } from './state';
 import { syncWorldbookEntry } from './inject';
+import { toastWarning } from './toast';
 import { pickEnum, 签事件id, 有世界数据 } from './世界数据';
 
 /**
@@ -11,7 +12,7 @@ import { pickEnum, 签事件id, 有世界数据 } from './世界数据';
  * 面板以前是就地改 data.value: 删事件按对象引用找(AI 换过数据树就找不到, 静默什么也不做)、
  * 存事件用 indexOf 找不到就丢弃、势力整对象覆盖、清空之后还要重读存储去猜"清干净没有"。
  * 现在四种改法(五层条目 / 事件 / 势力 / 世界概述 / 清空)都从这里走:
- * - 门自己算新数据, 不碰 store、不弹提示、不读存储 —— 界面只消费返回值;
+ * - 门自己算新数据, 不碰 store、不读存储, 也不直接弹提示(要告诉用户的话走 环境.提醒) —— 界面只消费返回值;
  * - 上限、同名、id 签发、字段规范化与 AI 那条路用同一份(世界数据.ts);
  * - 依赖走 世界数据环境: 生产环境(建世界数据环境)连真实的 state.ts / inject.ts / settings.ts,
  *   测试里换成假的就能把每种改法各跑一遍, 不需要酒馆。
@@ -25,12 +26,14 @@ import { pickEnum, 签事件id, 有世界数据 } from './世界数据';
 export interface 世界数据环境 {
   /** 是否开启「注入世界动向到主AI」——变更后要不要重同步世界书条目, 只由这一处决定 */
   注入世界书条目: boolean;
-  /** 写一份快照(界面手动编辑用: 锚在最新楼层, 不推进"已推进到哪") */
-  保存: (数据: WorldData) => void;
+  /** 写一份快照(界面手动编辑用: 锚在最新楼层, 不推进"已推进到哪"); 返回是否真的写进了楼层 */
+  保存: (数据: WorldData) => boolean;
   /** 物理删除所有楼层的快照 + 重置元数据(记录清空层) */
   清空: () => void;
   /** 重同步世界书条目: 写入=true 表示"照这份数据写成条目", false 表示"删掉条目" */
   同步世界书: (数据: WorldData, 写入: boolean) => unknown;
+  /** 有话说给用户听时走这里(生产环境接 toast); 不传就只是记日志 */
+  提醒?: (文本: string) => void;
 }
 
 /** 生产环境: 连真实的 保存/清空/世界书同步, 闸门从设置取 */
@@ -41,6 +44,7 @@ export function 建世界数据环境(): 世界数据环境 {
     保存: saveData,
     清空: clearAllData,
     同步世界书: (数据, 写入) => syncWorldbookEntry(数据, 写入, getSettings()),
+    提醒: 文本 => toastWarning(文本, '烟火'),
   };
 }
 
@@ -114,7 +118,12 @@ function 同步世界书(数据: WorldData, 环境: 世界数据环境) {
 
 /** 每个入口的固定顺序: 落快照 → 重同步世界书 → 返回新数据与说明 */
 function 落盘并同步(新数据: WorldData, 环境: 世界数据环境, 说明: string): 变更返回 {
-  环境.保存(新数据);
+  // 以前这里不看返回值: 楼层快照没写进去(楼层已被删除 / 锚点取不到)时, 界面照样报"已保存",
+  // 用户以为存住了, 刷新之后改动消失。现在写不进去就明确说一声(改动本身仍然生效, 只是没落盘)。
+  const 落上了 = 环境.保存(新数据);
+  if (落上了 === false) {
+    环境.提醒?.('改动已生效, 但快照没能写进楼层(楼层可能已被删除), 刷新后会丢——请先推进一次世界再改');
+  }
   同步世界书(新数据, 环境);
   return { 数据: 新数据, 说明 };
 }

@@ -19,7 +19,8 @@
 // 能收参数的模块仍然优先把宿主收进签名, 见 worldbook-inject.ts。
 // ---------------------------------------------------------------------------
 
-import * as _toast__WEBPACK_IMPORTED_MODULE_0__ from './toast';
+// 依赖按实际用到的符号具名导入(形态守卫见 tests/no-bundle-artifacts.test.ts)
+import { toastSuccess, toastWarning } from './toast';
 
 /** 变量表读写: 全局 / 聊天 / 楼层 / 脚本变量 */
 interface HostVars {
@@ -282,8 +283,8 @@ function createTavernHost(): Host {
             },
         },
         toast: {
-            warn: (text, title) => _toast__WEBPACK_IMPORTED_MODULE_0__.toastWarning(text, title),
-            success: (text, title) => _toast__WEBPACK_IMPORTED_MODULE_0__.toastSuccess(text, title),
+            warn: (text, title) => toastWarning(text, title),
+            success: (text, title) => toastSuccess(text, title),
         },
     };
 }

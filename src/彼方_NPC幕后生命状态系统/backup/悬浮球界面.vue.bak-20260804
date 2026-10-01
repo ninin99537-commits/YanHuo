@@ -1,0 +1,1501 @@
+<template>
+  <div ref="rootEl" class="bf-root">
+    <!-- 悬浮球 (可拖动) -->
+    <div
+      class="bf-orb"
+      :class="{ dragging: isDragging }"
+      :style="panelOpen ? { left: anchorX + 'px', top: anchorY + 'px' } : undefined"
+      :title="panelOpen ? '收起彼方' : '打开彼方'"
+      @pointerdown="onOrbPointerDown"
+      @click="onOrbClick"
+    >
+      <svg v-if="!panelOpen" class="bf-orb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2 L14.2 8.6 L21 10 L15.4 13.8 L17.4 20.6 L12 16.4 L6.6 20.6 L8.6 13.8 L3 10 L9.8 8.6 Z" fill="currentColor" stroke="none" />
+      </svg>
+      <span v-else class="bf-orb-close">✕</span>
+      <span v-if="updatingActive" class="bf-orb-spinner"></span>
+    </div>
+
+    <!-- 居中弹窗面板 -->
+    <Transition name="bf-fade">
+      <div v-if="panelOpen" class="bf-backdrop" @click="closePanel"></div>
+    </Transition>
+
+    <Transition name="bf-pop">
+      <div v-if="panelOpen" class="bf-panel" @click.stop>
+        <header class="bf-header">
+          <div class="bf-header-glow"></div>
+          <div class="bf-header-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M12 2 L14.2 8.6 L21 10 L15.4 13.8 L17.4 20.6 L12 16.4 L6.6 20.6 L8.6 13.8 L3 10 L9.8 8.6 Z" fill="currentColor" stroke="none" />
+            </svg>
+          </div>
+          <div class="bf-header-text">
+            <div class="bf-title">
+              彼方
+              <span class="bf-title-en">Elsewhere</span>
+            </div>
+            <div class="bf-subtitle">NPC 幕后生命状态系统</div>
+          </div>
+          <div class="bf-status" :class="{ ok: ready }" :title="statusTitle">
+            <span class="bf-status-dot"></span>
+            {{ ready ? '已就绪' : '未配置' }}
+          </div>
+          <button class="bf-icon-btn" title="收起" @click="closePanel">✕</button>
+        </header>
+
+        <nav class="bf-tabs">
+          <button
+            v-for="item in tabs"
+            :key="item.key"
+            class="bf-tab"
+            :class="{ active: tab === item.key }"
+            @click="tab = item.key"
+          >
+            <span class="bf-tab-icon">{{ item.icon }}</span>
+            {{ item.label }}
+          </button>
+        </nav>
+
+        <div class="bf-body">
+          <!-- 状态 -->
+          <div v-if="tab === 'status'" class="bf-page">
+            <div class="bf-toolbar">
+              <button class="bf-btn bf-btn-primary" :disabled="updating" @click="manualUpdate">
+                <span v-if="updating" class="bf-spinner"></span>
+                <span>{{ updating ? '更新中…' : '⟳ 手动更新' }}</span>
+              </button>
+              <button class="bf-btn" :disabled="updating" :title="'忽略现有卡片重新生成（AI 更新后不满意时用）'" @click="refillUpdate">
+                <span v-if="updating" class="bf-spinner"></span>
+                <span>{{ updating ? '更新中…' : '🔄 重新填写' }}</span>
+              </button>
+              <button class="bf-btn" :disabled="updating" @click="reload">刷新</button>
+              <button class="bf-btn bf-btn-danger" :disabled="updating" @click="clearAll">
+                {{ clearing ? '再点一次确认清空' : '清空' }}
+              </button>
+            </div>
+
+            <div class="bf-stats">
+              <div class="bf-stat">
+                <span class="bf-stat-icon">🔄</span>
+                <span class="bf-stat-num">{{ stats.更新次数 }}</span>
+                <span class="bf-stat-label">更新次数</span>
+              </div>
+              <div class="bf-stat">
+                <span class="bf-stat-icon">🧑‍🤝‍🧑</span>
+                <span class="bf-stat-num">{{ npcEntries.length }}</span>
+                <span class="bf-stat-label">追踪NPC</span>
+              </div>
+              <div class="bf-stat">
+                <span class="bf-stat-icon">🤝</span>
+                <span class="bf-stat-num">{{ interactions.length }}</span>
+                <span class="bf-stat-label">后台互动</span>
+              </div>
+            </div>
+
+            <div v-if="npcEntries.length === 0" class="bf-empty">
+              <div class="bf-empty-icon">🌌</div>
+              <div class="bf-empty-text">还没有任何 NPC 的幕后状态</div>
+              <div class="bf-empty-hint">前往「设置」填写 NPC 名单后点「手动更新」</div>
+            </div>
+
+            <div v-for="[name, card] in npcEntries" :key="name" class="bf-card">
+              <details>
+                <summary class="bf-card-head">
+                  <span class="bf-avatar">{{ name.trim().slice(0, 1) || '?' }}</span>
+                  <span class="bf-card-name">{{ name }}</span>
+                  <span v-if="card['可能偶遇']" class="bf-badge bf-badge-gold">偶遇可能</span>
+                  <span v-if="card['位置']" class="bf-loc">{{ card['位置'] }}</span>
+                  <span class="bf-card-arrow">▾</span>
+                </summary>
+                <div class="bf-card-body">
+                  <template v-for="field in cardFields" :key="field">
+                    <div v-if="card[field]" class="bf-field">
+                      <span class="bf-field-label">{{ field }}</span>
+                      <span class="bf-field-value">{{ card[field] }}</span>
+                    </div>
+                  </template>
+                  <div v-if="card['最后更新']" class="bf-field bf-field-meta">
+                    <span class="bf-field-label">最近更新</span>
+                    <span class="bf-field-value">{{ fmtTime(card['最后更新']) }}</span>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <!-- 设置 -->
+          <div v-else-if="tab === 'settings'" class="bf-page">
+            <div class="bf-group">
+              <div class="bf-group-title">🔌 接口配置（OpenAI 兼容）</div>
+              <label class="bf-row">
+                <span class="bf-label">接口地址</span>
+                <input v-model="settings.接口.地址" class="bf-input" placeholder="https://api.example.com/v1" />
+              </label>
+              <div class="bf-row">
+                <span class="bf-label">API密钥</span>
+                <input
+                  v-model="settings.接口.密钥"
+                  class="bf-input"
+                  :type="showKey ? 'text' : 'password'"
+                  placeholder="sk-..."
+                />
+                <button class="bf-btn bf-btn-mini" @click="showKey = !showKey">{{ showKey ? '隐藏' : '显示' }}</button>
+              </div>
+              <div class="bf-row">
+                <span class="bf-label">模型</span>
+                <select v-model="settings.接口.模型" class="bf-input">
+                  <option v-if="!modelList.includes(settings.接口.模型)" value="">（请选择模型）</option>
+                  <option v-for="model in modelList" :key="model" :value="model">{{ model }}</option>
+                </select>
+              </div>
+              <div class="bf-row bf-actions">
+                <button class="bf-btn" :disabled="fetchingModels" @click="loadModels">
+                  {{ fetchingModels ? '获取中…' : '获取模型列表' }}
+                </button>
+                <button class="bf-btn" :disabled="testing" @click="testConnection">
+                  {{ testing ? '测试中…' : '测试连接' }}
+                </button>
+              </div>
+              <div class="bf-row">
+                <span class="bf-label">温度</span>
+                <input v-model.number="settings.接口.温度" class="bf-input bf-input-num" type="number" min="0" max="2" step="0.1" />
+                <span class="bf-label">最大输出Token</span>
+                <input v-model.number="settings.接口.最大token" class="bf-input bf-input-num" type="number" min="1" max="8192" step="256" />
+              </div>
+              <div class="bf-hint">支持任何 /v1/models 与 /v1/chat/completions 服务；最大输出Token 是模型返回状态卡的最大长度，NPC 多时建议调大</div>
+            </div>
+
+            <div class="bf-group">
+              <div class="bf-group-title">⚙️ 更新设置</div>
+              <label class="bf-toggle">
+                <input v-model="settings.更新.自动更新" type="checkbox" />
+                <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                <span class="bf-toggle-text">AI 回复后自动更新</span>
+              </label>
+              <label class="bf-toggle">
+                <input v-model="settings.更新.追踪当前角色" type="checkbox" />
+                <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                <span class="bf-toggle-text">追踪当前角色卡角色</span>
+              </label>
+              <div class="bf-hint">仅群聊时角色卡名才是角色；若角色名只是卡片标题、角色写在世界书里，请保持关闭</div>
+              <label class="bf-toggle">
+                <input v-model="settings.更新.后台互动" type="checkbox" />
+                <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                <span class="bf-toggle-text">生成 NPC 间后台互动</span>
+              </label>
+              <label class="bf-toggle">
+                <input v-model="settings.更新.注入到AI" type="checkbox" />
+                <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                <span class="bf-toggle-text">注入幕后状态到主AI</span>
+              </label>
+              <label class="bf-toggle">
+                <input v-model="settings.更新.生理监测" type="checkbox" />
+                <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                <span class="bf-toggle-text">女性NPC生理监测</span>
+              </label>
+              <div class="bf-hint">开启后，彼方更新时会为女性NPC维护「生理监测」字段（周期/受孕率/结算规则），并随状态注入主AI提示词</div>
+              <label class="bf-toggle">
+                <input v-model="settings.更新.注入世界书" type="checkbox" />
+                <span class="bf-toggle-track"><span class="bf-toggle-thumb"></span></span>
+                <span class="bf-toggle-text">给彼方接口注入世界书内容</span>
+              </label>
+              <div class="bf-hint">按主AI的方式激活世界书条目（蓝灯常驻，绿灯关键字匹配最近回复），让更新AI理解世界设定与角色；不读全局世界书</div>
+              <div class="bf-row">
+                <span class="bf-label">世界书内容上限</span>
+                <input v-model.number="settings.更新.注入世界书上限" class="bf-input bf-input-num" type="number" min="500" max="50000" step="500" />
+                <span class="bf-hint">单次注入世界书的字数上限（字）</span>
+              </div>
+              <div class="bf-row">
+                <span class="bf-label">世界书条数上限</span>
+                <input v-model.number="settings.更新.注入世界书条数" class="bf-input bf-input-num" type="number" min="1" max="200" step="1" />
+                <span class="bf-hint">单次注入世界书的条目数上限（条）</span>
+              </div>
+              <div class="bf-row">
+                <span class="bf-label">更新频率</span>
+                <input v-model.number="settings.更新.更新频率" class="bf-input bf-input-num" type="number" min="1" />
+                <span class="bf-hint">每 N 条回复更新一次</span>
+              </div>
+              <div class="bf-row">
+                <span class="bf-label">读取回复数</span>
+                <input v-model.number="settings.更新.读取最近回复数" class="bf-input bf-input-num" type="number" min="1" max="20" />
+                <span class="bf-hint">更新时读取最近 N 条AI回复</span>
+              </div>
+            </div>
+
+            <div class="bf-group">
+              <div class="bf-group-title">👥 本聊天监控的NPC名单</div>
+              <textarea
+                v-model="npcText"
+                class="bf-textarea"
+                placeholder="每行一个NPC名字，或用逗号/顿号分隔"
+              ></textarea>
+              <div class="bf-hint">名单随当前聊天保存，新聊天默认为空；也可以留空，由 AI 自动识别重要NPC（路人/店员等功能性NPC不会被记录）</div>
+            </div>
+
+            <div class="bf-group">
+              <div class="bf-group-title">🏷️ 标签过滤</div>
+              <div class="bf-row bf-actions">
+                <button
+                  class="bf-btn bf-btn-mini"
+                  :class="{ active: settings.标签.模式 === '排除' }"
+                  @click="settings.标签.模式 = '排除'"
+                >
+                  排除
+                </button>
+                <button
+                  class="bf-btn bf-btn-mini"
+                  :class="{ active: settings.标签.模式 === '只读' }"
+                  @click="settings.标签.模式 = '只读'"
+                >
+                  只读
+                </button>
+              </div>
+              <textarea v-model="tagText" class="bf-textarea bf-textarea-short" placeholder="aftertalk&#10;thinking&#10;branches"></textarea>
+              <div class="bf-hint">
+                <template v-if="settings.标签.模式 === '排除'">排除这些标签内的内容，直接写标签名即可（如 thinking，不用带尖括号）；只出现 &lt;/标签&gt; 没有开头的孤立闭合标签会从楼层开头删到该结尾标签</template>
+                <template v-else>只读取这些标签内的内容；没有这些标签的楼层保留原文</template>
+              </div>
+            </div>
+          </div>
+
+          <!-- 互动 -->
+          <div v-else-if="tab === 'interactions'" class="bf-page">
+            <div v-if="interactions.length === 0" class="bf-empty">
+              <div class="bf-empty-icon">🤝</div>
+              <div class="bf-empty-text">还没有后台互动记录</div>
+              <div class="bf-empty-hint">在「设置」开启「生成 NPC 间后台互动」后再更新</div>
+            </div>
+            <div v-for="(item, index) in interactions" :key="index" class="bf-interaction">
+              <div class="bf-interaction-head">
+                <span class="bf-interaction-npcs">{{ item.NPC.join(' × ') }}</span>
+                <span class="bf-interaction-time">{{ item.时间 }}</span>
+              </div>
+              <div class="bf-interaction-event">{{ item.事件 }}</div>
+            </div>
+          </div>
+
+          <!-- 日志 -->
+          <div v-else class="bf-page">
+            <template v-if="debugLog">
+              <div class="bf-debug-meta">
+                <div class="bf-debug-meta-row">
+                  <span class="bf-debug-meta-label">时间</span>
+                  <span>{{ fmtTime(debugLog.time) }}</span>
+                </div>
+                <div class="bf-debug-meta-row">
+                  <span class="bf-debug-meta-label">模型</span>
+                  <span>{{ debugLog.model || '—' }}</span>
+                </div>
+                <div class="bf-debug-meta-row">
+                  <span class="bf-debug-meta-label">使用楼层</span>
+                  <span>#{{ debugLog.replyIds.length > 0 ? debugLog.replyIds.join('、#') : '—' }}</span>
+                </div>
+                <div class="bf-debug-meta-row">
+                  <span class="bf-debug-meta-label">更新NPC</span>
+                  <span>{{ debugLog.updatedNpcs.join('、') || '—' }}</span>
+                </div>
+                <div v-if="debugLog.removedNpcs.length > 0" class="bf-debug-meta-row">
+                  <span class="bf-debug-meta-label">移除NPC</span>
+                  <span>{{ debugLog.removedNpcs.join('、') }}</span>
+                </div>
+                <div v-if="debugLog.replyPreview" class="bf-debug-meta-row">
+                  <span class="bf-debug-meta-label">回复开头</span>
+                  <span class="bf-debug-preview">{{ debugLog.replyPreview }}</span>
+                </div>
+              </div>
+
+              <div class="bf-debug-section">
+                <div class="bf-debug-head">
+                  <span>📤 发送给 AI 的内容</span>
+                  <button class="bf-btn bf-btn-mini" @click="copyText(debugLog.request)">复制</button>
+                </div>
+                <details>
+                  <summary class="bf-debug-summary">展开查看（{{ debugLog.request.length }} 字）</summary>
+                  <pre class="bf-debug-pre">{{ debugLog.request }}</pre>
+                </details>
+              </div>
+
+              <div class="bf-debug-section">
+                <div class="bf-debug-head">
+                  <span>📥 AI 输出内容</span>
+                  <button class="bf-btn bf-btn-mini" @click="copyText(debugLog.response)">复制</button>
+                </div>
+                <details>
+                  <summary class="bf-debug-summary">展开查看（{{ debugLog.response.length }} 字）</summary>
+                  <pre class="bf-debug-pre">{{ debugLog.response }}</pre>
+                </details>
+              </div>
+
+              <div v-if="debugLog.error" class="bf-debug-section bf-debug-error">
+                <div class="bf-debug-head">
+                  <span>⚠️ 报错内容</span>
+                  <button class="bf-btn bf-btn-mini" @click="copyText(debugLog.error)">复制</button>
+                </div>
+                <pre class="bf-debug-pre">{{ debugLog.error }}</pre>
+              </div>
+
+              <div class="bf-toolbar">
+                <button class="bf-btn bf-btn-primary" @click="copyErrorReport">📋 复制报错内容发给助手</button>
+                <button class="bf-btn" @click="debugStore.clear()">清空日志</button>
+              </div>
+            </template>
+            <div v-else class="bf-empty">
+              <div class="bf-empty-icon">📜</div>
+              <div class="bf-empty-text">还没有更新日志</div>
+              <div class="bf-empty-hint">手动更新或自动更新后会记录本轮发送与输出内容</div>
+            </div>
+          </div>
+        </div>
+
+        <footer class="bf-footer">
+          <span v-if="stats.最后更新">最后更新 {{ fmtTime(stats.最后更新) }}</span>
+          <span v-else>尚未更新</span>
+          <span class="bf-footer-right">v1.2 · 彼方</span>
+        </footer>
+      </div>
+    </Transition>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { storeToRefs } from 'pinia';
+import { chatCompletion, fetchModelList } from './api';
+import { useSettingsStore } from './settings';
+import { CARD_FIELDS, freshClearData, loadData, useDebugStore, useStateStore, useUpdatingStore } from './state';
+import { updateNpcStates } from './update';
+
+const ORB_KEY = '彼方_悬浮球';
+const CLOSED_SIZE = 64;
+
+const settingsStore = useSettingsStore();
+const { settings } = storeToRefs(settingsStore);
+
+const stateStore = useStateStore();
+const { data } = storeToRefs(stateStore);
+
+const debugStore = useDebugStore();
+const { log: debugLog } = storeToRefs(debugStore);
+
+const updatingStore = useUpdatingStore();
+const { active: updatingActive, message: updatingMessage } = storeToRefs(updatingStore);
+
+const rootEl = ref<HTMLElement | null>(null);
+const frameWin = computed<Window | null>(() => rootEl.value?.ownerDocument?.defaultView ?? null);
+const frame = computed<HTMLIFrameElement | null>(() => frameWin.value?.frameElement as HTMLIFrameElement | null);
+const parentWin = computed<Window | null>(() => frameWin.value?.parent ?? null);
+
+const panelOpen = ref(false);
+const tab = ref<'status' | 'settings' | 'interactions' | 'log'>('status');
+const showKey = ref(false);
+const fetchingModels = ref(false);
+const testing = ref(false);
+const updating = ref(false);
+const isDragging = ref(false);
+
+const cardFields = CARD_FIELDS;
+const tabs = [
+  { key: 'status', icon: '🪄', label: '状态' },
+  { key: 'settings', icon: '⚙️', label: '设置' },
+  { key: 'interactions', icon: '🤝', label: '互动' },
+  { key: 'log', icon: '📜', label: '日志' },
+] as const;
+
+const npcEntries = computed(() => Object.entries(data.value.NPC ?? {}));
+const interactions = computed(() => data.value.后台互动 ?? []);
+const stats = computed(() => data.value.统计 ?? { 更新次数: 0, 最后更新: 0 });
+const modelList = computed(() => settings.value.接口.模型列表);
+const ready = computed(() => Boolean(settings.value.接口.地址 && settings.value.接口.模型));
+const statusTitle = computed(() =>
+  ready.value ? `接口: ${settings.value.接口.地址} · 模型: ${settings.value.接口.模型}` : '请在「设置」中配置接口地址与模型',
+);
+
+const npcText = computed({
+  get: () => data.value.名单.join('\n'),
+  set: value => {
+    data.value.名单 = value
+      .split(/[\n,，;；、]+/)
+      .map(item => item.trim())
+      .filter(Boolean);
+    stateStore.save();
+  },
+});
+
+const tagText = computed({
+  get: () => settings.value.标签.列表.join('\n'),
+  set: value => {
+    settings.value.标签.列表 = value
+      .split(/[\n,，;；、]+/)
+      .map(item => item.trim().replace(/^<|>$/g, ''))
+      .filter(Boolean);
+  },
+});
+
+const savedOrb = (() => {
+  try {
+    return getVariables({ type: 'global' })?.[ORB_KEY] ?? null;
+  } catch {
+    return null;
+  }
+})();
+
+const viewportW = (): number => parentWin.value?.innerWidth ?? window.innerWidth;
+const viewportH = (): number => parentWin.value?.innerHeight ?? window.innerHeight;
+
+const anchorX = ref<number | null>(null);
+const anchorY = ref<number | null>(null);
+
+function currentX(): number {
+  return anchorX.value ?? viewportW() - 40;
+}
+
+function currentY(): number {
+  return anchorY.value ?? viewportH() - 110;
+}
+
+function applyFrame() {
+  const target = frame.value;
+  if (!target) return;
+  const x = currentX();
+  const y = currentY();
+  if (panelOpen.value) {
+    target.style.width = `${viewportW()}px`;
+    target.style.height = `${viewportH()}px`;
+    target.style.left = '0px';
+    target.style.top = '0px';
+  } else {
+    target.style.width = `${CLOSED_SIZE}px`;
+    target.style.height = `${CLOSED_SIZE}px`;
+    target.style.left = `${clamp(x - CLOSED_SIZE / 2, 8, viewportW() - CLOSED_SIZE - 8)}px`;
+    target.style.top = `${clamp(y - CLOSED_SIZE / 2, 8, viewportH() - CLOSED_SIZE - 8)}px`;
+  }
+}
+
+onMounted(() => {
+  anchorX.value =
+    typeof savedOrb?.x === 'number' && savedOrb.x >= CLOSED_SIZE / 2 && savedOrb.x <= viewportW() - CLOSED_SIZE / 2
+      ? savedOrb.x
+      : viewportW() - 40;
+  anchorY.value =
+    typeof savedOrb?.y === 'number' && savedOrb.y >= CLOSED_SIZE / 2 && savedOrb.y <= viewportH() - CLOSED_SIZE / 2
+      ? savedOrb.y
+      : viewportH() - 110;
+  applyFrame();
+  parentWin.value?.addEventListener('resize', onViewportResize);
+});
+
+function onViewportResize() {
+  if (anchorX.value !== null) anchorX.value = clamp(anchorX.value, CLOSED_SIZE / 2, viewportW() - CLOSED_SIZE / 2);
+  if (anchorY.value !== null) anchorY.value = clamp(anchorY.value, CLOSED_SIZE / 2, viewportH() - CLOSED_SIZE / 2);
+  applyFrame();
+}
+
+watch([panelOpen, anchorX, anchorY], applyFrame);
+
+watch([anchorX, anchorY], () => {
+  try {
+    insertOrAssignVariables({ [ORB_KEY]: { x: anchorX.value, y: anchorY.value } }, { type: 'global' });
+  } catch {
+    // 忽略保存失败
+  }
+});
+
+const UPDATING_POP_ID = '彼方_更新弹窗';
+let updatingPopEl: HTMLElement | null = null;
+
+function ensureUpdatingPop(doc: Document): HTMLElement {
+  let el = doc.getElementById(UPDATING_POP_ID);
+  if (el) return el;
+  el = doc.createElement('div');
+  el.id = UPDATING_POP_ID;
+  el.style.cssText =
+    'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:2147483000;display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:12px;background:rgba(24,26,36,.94);color:#fff;font:13px/1.4 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.4);user-select:none;';
+  el.innerHTML = `
+    <span class="bf-pop-spin" style="width:14px;height:14px;border:2px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;display:inline-block;animation:bf-pop-spin .8s linear infinite;flex:none;"></span>
+    <span class="bf-pop-msg"></span>
+    <button type="button" class="bf-pop-cancel" style="margin-left:2px;padding:4px 10px;border:none;border-radius:8px;background:rgba(255,255,255,.14);color:#fff;font:inherit;cursor:pointer;">中断</button>`;
+  if (!doc.querySelector('style[data-bf-pop]')) {
+    const style = doc.createElement('style');
+    style.setAttribute('data-bf-pop', '1');
+    style.textContent = '@keyframes bf-pop-spin{to{transform:rotate(360deg)}}';
+    doc.head.appendChild(style);
+  }
+  doc.body.appendChild(el);
+  return el;
+}
+
+watch([updatingActive, updatingMessage], ([active, message]) => {
+  const parentDoc = parentWin.value?.document;
+  if (!parentDoc) return;
+  if (active) {
+    updatingPopEl = ensureUpdatingPop(parentDoc);
+    const msgEl = updatingPopEl.querySelector('.bf-pop-msg');
+    if (msgEl) msgEl.textContent = message || '彼方更新中…';
+    const cancelBtn = updatingPopEl.querySelector('.bf-pop-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => updatingStore.cancel());
+    updatingPopEl.style.display = 'flex';
+  } else if (updatingPopEl && updatingPopEl.isConnected) {
+    updatingPopEl.style.display = 'none';
+  }
+});
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+let startX = 0;
+let startY = 0;
+let startAnchorX = 0;
+let startAnchorY = 0;
+let moved = false;
+
+function parentClient(e: PointerEvent): { x: number; y: number } {
+  const rect = frame.value?.getBoundingClientRect();
+  if (e.view === frameWin.value && rect) {
+    return { x: rect.left + e.clientX, y: rect.top + e.clientY };
+  }
+  return { x: e.clientX, y: e.clientY };
+}
+
+function onOrbPointerDown(e: PointerEvent) {
+  e.preventDefault();
+  isDragging.value = true;
+  moved = false;
+  const rect = frame.value?.getBoundingClientRect();
+  startX = (rect?.left ?? 0) + e.clientX;
+  startY = (rect?.top ?? 0) + e.clientY;
+  startAnchorX = currentX();
+  startAnchorY = currentY();
+  frameWin.value?.addEventListener('pointermove', onMove);
+  frameWin.value?.addEventListener('pointerup', onUp);
+  parentWin.value?.addEventListener('pointermove', onMove);
+  parentWin.value?.addEventListener('pointerup', onUp);
+}
+
+function onMove(e: PointerEvent) {
+  const point = parentClient(e);
+  if (Math.abs(point.x - startX) + Math.abs(point.y - startY) > 4) moved = true;
+  anchorX.value = clamp(startAnchorX + (point.x - startX), CLOSED_SIZE / 2, viewportW() - CLOSED_SIZE / 2);
+  anchorY.value = clamp(startAnchorY + (point.y - startY), CLOSED_SIZE / 2, viewportH() - CLOSED_SIZE / 2);
+}
+
+function onUp() {
+  isDragging.value = false;
+  frameWin.value?.removeEventListener('pointermove', onMove);
+  frameWin.value?.removeEventListener('pointerup', onUp);
+  parentWin.value?.removeEventListener('pointermove', onMove);
+  parentWin.value?.removeEventListener('pointerup', onUp);
+  window.setTimeout(() => {
+    moved = false;
+  }, 200);
+}
+
+function onOrbClick() {
+  if (moved) {
+    moved = false;
+    return;
+  }
+  panelOpen.value = !panelOpen.value;
+}
+
+function closePanel() {
+  panelOpen.value = false;
+}
+
+function fmtTime(timestamp?: number): string {
+  return timestamp ? new Date(timestamp).toLocaleString() : '';
+}
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toastr.success('已复制到剪贴板', '彼方');
+  } catch {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    textarea.remove();
+    toastr.success('已复制到剪贴板', '彼方');
+  }
+}
+
+function buildErrorReport(): string {
+  const log = debugLog.value;
+  if (!log) return '';
+  return [
+    '【彼方 · 报错报告】',
+    `时间: ${fmtTime(log.time)}`,
+    `模型: ${log.model || '—'}`,
+    `使用的楼层: #${log.replyIds.length > 0 ? log.replyIds.join('、#') : '—'}`,
+    `本轮更新NPC: ${log.updatedNpcs.join('、') || '—'}`,
+    log.error ? `错误: ${log.error}` : '',
+    '',
+    '--- 发送给 AI 的内容 ---',
+    log.request,
+    '',
+    '--- AI 输出内容 ---',
+    log.response || '(无输出)',
+  ]
+    .filter(line => line !== '')
+    .join('\n');
+}
+
+async function copyErrorReport() {
+  await copyText(buildErrorReport());
+}
+
+async function loadModels() {
+  if (!settings.value.接口.地址) {
+    toastr.warning('请先填写接口地址', '彼方');
+    return;
+  }
+  fetchingModels.value = true;
+  try {
+    const list = await fetchModelList();
+    settings.value.接口.模型列表 = list;
+    if (!list.includes(settings.value.接口.模型)) {
+      settings.value.接口.模型 = list[0] ?? '';
+    }
+    toastr.success(`获取到 ${list.length} 个模型`, '彼方');
+  } catch (error) {
+    console.error('[彼方] 获取模型列表失败:', error);
+    toastr.error(error instanceof Error ? error.message : String(error), '彼方');
+  } finally {
+    fetchingModels.value = false;
+  }
+}
+
+async function testConnection() {
+  if (!settings.value.接口.地址 || !settings.value.接口.模型) {
+    toastr.warning('请先填写接口地址并选择模型', '彼方');
+    return;
+  }
+  testing.value = true;
+  try {
+    const reply = await chatCompletion([{ role: 'user', content: '请只回复两个字: 正常' }], { max_tokens: 16 });
+    toastr.success(`连接正常, 模型回复: ${reply.trim().slice(0, 50)}`, '彼方');
+  } catch (error) {
+    console.error('[彼方] 测试连接失败:', error);
+    toastr.error(error instanceof Error ? error.message : String(error), '彼方');
+  } finally {
+    testing.value = false;
+  }
+}
+
+async function manualUpdate() {
+  updating.value = true;
+  try {
+    await updateNpcStates(true);
+  } finally {
+    updating.value = false;
+  }
+}
+
+async function refillUpdate() {
+  updating.value = true;
+  try {
+    await updateNpcStates(true, true);
+  } finally {
+    updating.value = false;
+  }
+}
+
+function reload() {
+  stateStore.reload();
+}
+
+const clearing = ref(false);
+
+function clearAll() {
+  if (!clearing.value) {
+    clearing.value = true;
+    window.setTimeout(() => {
+      clearing.value = false;
+    }, 3000);
+    return;
+  }
+  clearing.value = false;
+  const empty = freshClearData();
+  data.value = empty;
+  stateStore.save();
+  const reloaded = loadData();
+  if (Object.keys(reloaded.NPC).length === 0 && reloaded.名单.length === 0) {
+    toastr.success('彼方: 数据已清空，清空后只分析清空之后的新楼层', '彼方');
+  } else {
+    toastr.error('彼方: 清空后检测到仍有数据残留，请查看浏览器控制台并重新加载脚本', '彼方');
+  }
+}
+</script>
+
+<style>
+html,
+body {
+  height: 100%;
+}
+</style>
+
+<style scoped>
+.bf-root {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: #e6e9ff;
+  user-select: none;
+}
+
+/* ---------- 悬浮球 ---------- */
+.bf-orb {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  background: radial-gradient(circle at 32% 28%, #a78bfa 0%, #7c5cf0 35%, #4f46e5 75%, #3730a3 100%);
+  box-shadow:
+    0 0 0 1px rgba(167, 139, 250, 0.5),
+    0 4px 20px rgba(99, 102, 241, 0.55),
+    0 0 32px rgba(139, 92, 246, 0.35);
+  color: #fff;
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+  touch-action: none;
+}
+.bf-orb:hover {
+  transform: translate(-50%, -50%) scale(1.06);
+  box-shadow:
+    0 0 0 1px rgba(167, 139, 250, 0.7),
+    0 6px 26px rgba(99, 102, 241, 0.7),
+    0 0 44px rgba(139, 92, 246, 0.5);
+}
+.bf-orb.dragging {
+  cursor: grabbing;
+  transform: translate(-50%, -50%) scale(1.1);
+}
+.bf-orb-icon {
+  width: 28px;
+  height: 28px;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.4));
+}
+.bf-orb-close {
+  font-size: 20px;
+  line-height: 1;
+  font-weight: 700;
+}
+.bf-orb-spinner {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: bf-spin 0.7s linear infinite;
+}
+
+/* ---------- 遮罩 ---------- */
+.bf-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 9, 22, 0.62);
+}
+
+/* ---------- 居中面板 ---------- */
+.bf-panel {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(580px, 94vw);
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 20px;
+  overflow: hidden;
+  background: linear-gradient(165deg, rgba(33, 36, 72, 0.985) 0%, rgba(19, 20, 40, 0.995) 100%);
+  border: 1px solid rgba(139, 148, 255, 0.3);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.65), 0 0 40px rgba(99, 102, 241, 0.25);
+  user-select: text;
+}
+
+.bf-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 12px;
+  flex-shrink: 0;
+}
+.bf-header-glow {
+  position: absolute;
+  top: -60px;
+  left: 10%;
+  right: 10%;
+  height: 120px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(139, 92, 246, 0.35), transparent);
+  pointer-events: none;
+}
+.bf-header-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: linear-gradient(135deg, #7c5cf0, #4f46e5);
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.45);
+}
+.bf-header-icon svg {
+  width: 22px;
+  height: 22px;
+}
+.bf-header-text {
+  flex: 1;
+  min-width: 0;
+}
+.bf-title {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  background: linear-gradient(90deg, #dbe3ff, #a78bfa 55%, #67e8f9);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  line-height: 1.2;
+}
+.bf-title-en {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  margin-left: 6px;
+  opacity: 0.75;
+}
+.bf-subtitle {
+  font-size: 11px;
+  color: #8f96c9;
+  margin-top: 2px;
+  letter-spacing: 1px;
+}
+.bf-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #9aa0c0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.bf-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #6b7280;
+}
+.bf-status.ok .bf-status-dot {
+  background: #34d399;
+  box-shadow: 0 0 8px #34d399;
+  animation: bf-blink 2s ease-in-out infinite;
+}
+.bf-status.ok {
+  color: #a7f3d0;
+}
+.bf-icon-btn {
+  border: none;
+  background: transparent;
+  color: #9aa0c0;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 10px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.bf-icon-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* ---------- 标签页 ---------- */
+.bf-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px 12px 10px;
+  flex-shrink: 0;
+}
+.bf-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: #9aa0c0;
+  font-size: 13px;
+  padding: 8px 0;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.bf-tab-icon {
+  font-size: 14px;
+}
+.bf-tab:hover {
+  color: #dbe1ff;
+  background: rgba(255, 255, 255, 0.04);
+}
+.bf-tab.active {
+  color: #e0e7ff;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.28), rgba(99, 102, 241, 0.2));
+  box-shadow: inset 0 0 0 1px rgba(139, 148, 255, 0.25);
+  font-weight: 700;
+}
+
+/* ---------- 主体 ---------- */
+.bf-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px 16px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 148, 255, 0.35) transparent;
+}
+.bf-body::-webkit-scrollbar {
+  width: 6px;
+}
+.bf-body::-webkit-scrollbar-thumb {
+  background: rgba(139, 148, 255, 0.35);
+  border-radius: 3px;
+}
+.bf-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bf-toolbar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.bf-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(139, 148, 255, 0.3);
+  background: rgba(139, 148, 255, 0.1);
+  color: #dbe1ff;
+  font-size: 12px;
+  padding: 7px 14px;
+  border-radius: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.bf-btn:hover:not(:disabled) {
+  background: rgba(139, 148, 255, 0.22);
+  border-color: rgba(167, 139, 250, 0.6);
+}
+.bf-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.bf-btn.active {
+  background: linear-gradient(135deg, #7c5cf0, #6366f1);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 700;
+}
+.bf-btn-primary {
+  background: linear-gradient(135deg, #7c5cf0, #6366f1);
+  border: none;
+  color: #fff;
+  font-weight: 600;
+}
+.bf-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+.bf-btn-danger {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.1);
+  color: #fecaca;
+}
+.bf-btn-danger:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.2);
+  border-color: rgba(248, 113, 113, 0.6);
+}
+.bf-btn-mini {
+  padding: 5px 9px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.bf-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: bf-spin 0.7s linear infinite;
+}
+
+.bf-stats {
+  display: flex;
+  gap: 8px;
+}
+.bf-stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 4px;
+  border-radius: 14px;
+  background: linear-gradient(160deg, rgba(139, 148, 255, 0.1), rgba(139, 148, 255, 0.04));
+  border: 1px solid rgba(139, 148, 255, 0.14);
+}
+.bf-stat-icon {
+  font-size: 16px;
+}
+.bf-stat-num {
+  font-size: 20px;
+  font-weight: 800;
+  background: linear-gradient(90deg, #dbe3ff, #a78bfa);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.bf-stat-label {
+  font-size: 10px;
+  color: #8f96c9;
+  letter-spacing: 1px;
+}
+
+.bf-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 34px 12px;
+  text-align: center;
+}
+.bf-empty-icon {
+  font-size: 38px;
+  opacity: 0.9;
+}
+.bf-empty-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: #c3c9f2;
+}
+.bf-empty-hint {
+  font-size: 11px;
+  color: #8f96c9;
+}
+
+.bf-card {
+  border-radius: 14px;
+  background: rgba(139, 148, 255, 0.06);
+  border: 1px solid rgba(139, 148, 255, 0.14);
+  overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+.bf-card:hover {
+  border-color: rgba(167, 139, 250, 0.35);
+}
+.bf-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.bf-card-head::-webkit-details-marker {
+  display: none;
+}
+.bf-card-head:hover {
+  background: rgba(139, 148, 255, 0.08);
+}
+.bf-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+}
+.bf-card-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #e6e9ff;
+}
+.bf-loc {
+  font-size: 10px;
+  color: #9aa0c0;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 2px 7px;
+  border-radius: 999px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 130px;
+}
+.bf-badge {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.bf-badge-gold {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+}
+.bf-card-arrow {
+  margin-left: auto;
+  color: #8f96c9;
+  font-size: 11px;
+  transition: transform 0.18s ease;
+}
+.bf-card[open] .bf-card-arrow {
+  transform: rotate(180deg);
+}
+.bf-card-body {
+  padding: 2px 12px 10px;
+  border-top: 1px dashed rgba(139, 148, 255, 0.15);
+}
+.bf-field {
+  display: flex;
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 12px;
+  border-bottom: 1px dashed rgba(139, 148, 255, 0.1);
+}
+.bf-field:last-child {
+  border-bottom: none;
+}
+.bf-field-label {
+  flex-shrink: 0;
+  min-width: 64px;
+  color: #8f96c9;
+  font-size: 11px;
+  padding-top: 1px;
+}
+.bf-field-value {
+  color: #d5dafc;
+  line-height: 1.5;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.bf-field-meta {
+  opacity: 0.7;
+}
+
+/* ---------- 设置 ---------- */
+.bf-group {
+  border-radius: 14px;
+  background: rgba(139, 148, 255, 0.06);
+  border: 1px solid rgba(139, 148, 255, 0.14);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.bf-group-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #c3c9f2;
+  letter-spacing: 1px;
+}
+.bf-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bf-label {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #9aa0c0;
+  min-width: 66px;
+}
+.bf-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(10, 11, 25, 0.6);
+  border: 1px solid rgba(139, 148, 255, 0.22);
+  border-radius: 9px;
+  color: #e6e9ff;
+  font-size: 12px;
+  padding: 7px 10px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.bf-input:focus {
+  border-color: rgba(167, 139, 250, 0.7);
+}
+.bf-input::placeholder {
+  color: #5c6286;
+}
+.bf-input-num {
+  max-width: 70px;
+  flex: none;
+}
+.bf-actions {
+  flex-wrap: wrap;
+}
+.bf-hint {
+  font-size: 11px;
+  color: #8f96c9;
+  opacity: 0.85;
+}
+.bf-textarea {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  background: rgba(10, 11, 25, 0.6);
+  border: 1px solid rgba(139, 148, 255, 0.22);
+  border-radius: 9px;
+  color: #e6e9ff;
+  font-size: 12px;
+  padding: 8px 10px;
+  outline: none;
+  font-family: inherit;
+}
+.bf-textarea-short {
+  min-height: 48px;
+}
+.bf-textarea:focus {
+  border-color: rgba(167, 139, 250, 0.7);
+}
+.bf-textarea::placeholder {
+  color: #5c6286;
+}
+
+.bf-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  padding: 3px 0;
+}
+.bf-toggle input {
+  display: none;
+}
+.bf-toggle-track {
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(139, 148, 255, 0.18);
+  border: 1px solid rgba(139, 148, 255, 0.28);
+  position: relative;
+  transition: background 0.18s ease, border-color 0.18s ease;
+  flex-shrink: 0;
+}
+.bf-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #9aa0c0;
+  transition: all 0.18s ease;
+}
+.bf-toggle input:checked + .bf-toggle-track {
+  background: linear-gradient(135deg, #7c5cf0, #6366f1);
+  border-color: transparent;
+}
+.bf-toggle input:checked + .bf-toggle-track .bf-toggle-thumb {
+  left: 18px;
+  background: #fff;
+}
+.bf-toggle-text {
+  font-size: 12px;
+  color: #c3c9f2;
+}
+
+/* ---------- 互动 ---------- */
+.bf-interaction {
+  border-radius: 12px;
+  background: rgba(139, 148, 255, 0.06);
+  border: 1px solid rgba(139, 148, 255, 0.14);
+  padding: 10px 12px;
+}
+.bf-interaction-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.bf-interaction-npcs {
+  font-size: 12px;
+  font-weight: 700;
+  color: #c7d2fe;
+}
+.bf-interaction-time {
+  font-size: 10px;
+  color: #8f96c9;
+}
+.bf-interaction-event {
+  margin-top: 5px;
+  font-size: 12px;
+  color: #d5dafc;
+  line-height: 1.5;
+}
+
+/* ---------- 日志 ---------- */
+.bf-debug-meta {
+  border-radius: 14px;
+  background: rgba(139, 148, 255, 0.06);
+  border: 1px solid rgba(139, 148, 255, 0.14);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.bf-debug-meta-row {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: #d5dafc;
+  align-items: baseline;
+}
+.bf-debug-meta-label {
+  flex-shrink: 0;
+  min-width: 64px;
+  color: #8f96c9;
+  font-size: 11px;
+}
+.bf-debug-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+.bf-debug-section {
+  border-radius: 14px;
+  background: rgba(139, 148, 255, 0.06);
+  border: 1px solid rgba(139, 148, 255, 0.14);
+  padding: 10px 12px;
+}
+.bf-debug-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #c3c9f2;
+}
+.bf-debug-summary {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #8f96c9;
+  cursor: pointer;
+  user-select: none;
+}
+.bf-debug-summary:hover {
+  color: #c3c9f2;
+}
+.bf-debug-pre {
+  margin: 8px 0 0;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(10, 11, 25, 0.7);
+  border: 1px solid rgba(139, 148, 255, 0.12);
+  font-size: 11px;
+  line-height: 1.5;
+  color: #cdd3f5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow-y: auto;
+  font-family: 'SF Mono', Consolas, 'Courier New', monospace;
+  user-select: text;
+}
+.bf-debug-error {
+  border-color: rgba(248, 113, 113, 0.4);
+  background: rgba(248, 113, 113, 0.06);
+}
+.bf-debug-error .bf-debug-head {
+  color: #fca5a5;
+}
+.bf-debug-error .bf-debug-pre {
+  border-color: rgba(248, 113, 113, 0.3);
+  color: #fecaca;
+}
+
+/* ---------- 页脚 ---------- */
+.bf-footer {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 16px;
+  font-size: 10px;
+  color: #8f96c9;
+  border-top: 1px solid rgba(139, 148, 255, 0.12);
+  background: rgba(10, 11, 25, 0.4);
+}
+.bf-footer-right {
+  letter-spacing: 1px;
+}
+
+/* ---------- 过渡与动画 ---------- */
+.bf-fade-enter-active,
+.bf-fade-leave-active {
+  transition: opacity 0.18s ease;
+}
+.bf-fade-enter-from,
+.bf-fade-leave-to {
+  opacity: 0;
+}
+.bf-pop-enter-active,
+.bf-pop-leave-active {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.bf-pop-enter-from,
+.bf-pop-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.92);
+}
+
+@keyframes bf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes bf-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+</style>

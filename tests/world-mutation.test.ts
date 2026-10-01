@@ -320,6 +320,7 @@ console.log('\n[17] 界面不再就地改数据(改数据的路只有门这一�
   }
   ok('界面引用了那道门', vueSource.includes("from './世界数据变更'"));
   ok('界面用建世界数据环境()取环境', vueSource.includes('建世界数据环境()'));
+  ok('事件编辑框按 id 认, 不按对象引用', !vueSource.includes('editingEvent === event') && vueSource.includes('同一条事件(editingEvent, event)'));
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);

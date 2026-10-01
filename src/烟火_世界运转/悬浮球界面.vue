@@ -744,6 +744,12 @@ const eventDraft = ref<WorldEvent>({
   演变: [],
 });
 const eventBase = ref<WorldEvent | undefined>(undefined);
+/** 事件定位一律按 id(与 世界数据变更.ts 同一口径): AI 推进一次会整棵换掉数据树, 对象引用当场失效——
+ *  按引用判断的话, 你正在编辑的事件框会在推进后凭空消失, 输入全丢 */
+function 同一条事件(编辑中: WorldEvent | null, 候选: WorldEvent) {
+  if (!编辑中) return false;
+  return 编辑中.id && 候选.id ? 编辑中.id === 候选.id : 编辑中.标题 === 候选.标题;
+}
 function startEditEvent(event: WorldEvent) {
   editingEvent.value = event;
   eventDraft.value = { ...event };
@@ -1233,7 +1239,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                   <span v-if="event.地点" class="yh-feed-place">{{ event.地点 }}</span>
                 </div>
                 <div class="yh-feed-main">
-                  <template v-if="editingEvent === event">
+                  <template v-if="同一条事件(editingEvent, event)">
                     <div class="yh-inline-edit">
                       <div class="yh-edit-row">
                         <input v-model="eventDraft.标题" class="yh-input" placeholder="标题" />

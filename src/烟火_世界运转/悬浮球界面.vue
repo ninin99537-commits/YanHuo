@@ -1344,11 +1344,6 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                     <span class="yh-toggle-text">走酒馆服务器转发请求<em>接口不支持浏览器跨域(CORS)时开启</em></span>
                   </label>
                   <label class="yh-toggle">
-                    <input v-model="settings.接口.关闭思维链" type="checkbox" />
-                    <span class="yh-toggle-track"></span>
-                    <span class="yh-toggle-text">关闭模型思维链<em>原生支持 Responses API 的模型可用</em></span>
-                  </label>
-                  <label class="yh-toggle">
                     <input v-model="settings.接口.流式" type="checkbox" />
                     <span class="yh-toggle-track"></span>
                     <span class="yh-toggle-text">流式输出<em>长输出更不易被网关掐断</em></span>

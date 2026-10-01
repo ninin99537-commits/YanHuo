@@ -9,8 +9,6 @@ export const ApiConfigSchema = z
     模型列表: z.array(z.string()).default([]),
     /** 走酒馆服务器转发请求(绕开浏览器跨域限制), 用于不支持 CORS 的接口 */
     服务端转发: z.boolean().default(false),
-    /** 关闭模型思维链(推理/思考), 加快响应并避免输出被推理占满(thinking.type=disabled, Responses API 风格) */
-    关闭思维链: z.boolean().default(false),
     /** 流式输出: 直连走 SSE, 转发走 should_stream */
     流式: z.boolean().default(false),
     温度: z.coerce

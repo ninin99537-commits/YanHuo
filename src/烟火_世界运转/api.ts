@@ -36,8 +36,8 @@ export function maskBaseUrl(url: string): string {
 
 /** 请求上下文(脱敏), 附加到错误信息方便排查 */
 function requestContext(): string {
-  const { 模型, 最大token, 服务端转发, 关闭思维链 } = getSettings().接口;
-  return `模型=${模型 || '(未选)'}, 最大token=${最大token}, 服务端转发=${服务端转发 ? '开' : '关'}, 关闭思维链=${关闭思维链 ? '开' : '关'}`;
+  const { 模型, 最大token, 服务端转发 } = getSettings().接口;
+  return `模型=${模型 || '(未选)'}, 最大token=${最大token}, 服务端转发=${服务端转发 ? '开' : '关'}`;
 }
 
 /** 检测接口/模型的内容政策拦截, 返回友好提示 */
@@ -122,7 +122,6 @@ export async function chatCompletion(messages: ChatMessage[], options: ChatOptio
   const 温度 = options.temperature ?? baseCfg.温度;
   const 最大token = options.max_tokens ?? baseCfg.最大token;
   const 服务端转发 = baseCfg.服务端转发;
-  const 关闭思维链 = baseCfg.关闭思维链;
   const 流式 = baseCfg.流式 ?? false;
 
   const base = normalizeBaseUrl(地址);
@@ -168,10 +167,11 @@ export async function chatCompletion(messages: ChatMessage[], options: ChatOptio
             apiurl: base,
             key: 密钥.trim(),
             model: 模型,
-            source: 关闭思维链 ? 'custom' : 'openai',
+            // 历史残留的开关已删除: 请求固定按 OpenAI 兼容格式发出, 不再切换 source、不再附自定义请求体
+            // (老设置里残留的字段由 schema 忽略, 不会报错)
+            source: 'openai',
             temperature: 温度,
             max_tokens: 最大token,
-            ...(关闭思维链 ? { custom_include_body: { thinking: { type: 'disabled' } } } : {}),
           },
           ordered_prompts: orderedPrompts,
         }),
@@ -186,7 +186,7 @@ export async function chatCompletion(messages: ChatMessage[], options: ChatOptio
       if (abortSignal?.aborted) throw Error('用户已中断本次推进', { cause: error });
       if (error instanceof Error && /无法连接到|接口返回错误|响应中|获取模型/.test(error.message)) throw error;
       if (error instanceof Error && /Gateway|timeout|time-out|超时/i.test(error.message)) {
-        throw Error(`生成超时(可能是模型思维链/推理过长或接口负载高)。可开启「关闭思维链」或调小「最大输出Token」后重试。原始错误: ${error.message}`, { cause: error });
+        throw Error(`生成超时(可能是模型思维链/推理过长或接口负载高)。调小「最大输出Token」后重试。原始错误: ${error.message}`, { cause: error });
       }
       const errText = error instanceof Error ? error.message : String(error);
       throw Error(`通过酒馆服务器请求失败(${requestContext()}): ${errText}${policyBlockHint(errText)}`, { cause: error });
@@ -201,7 +201,6 @@ export async function chatCompletion(messages: ChatMessage[], options: ChatOptio
     stream: 流式,
     temperature: 温度,
     max_tokens: 最大token,
-    ...(关闭思维链 ? { thinking: { type: 'disabled' } } : {}),
   };
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT);

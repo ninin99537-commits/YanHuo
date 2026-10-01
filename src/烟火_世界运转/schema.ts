@@ -7,9 +7,9 @@ export const ApiConfigSchema = z
     密钥: z.string().default(''),
     模型: z.string().default(''),
     模型列表: z.array(z.string()).default([]),
-    /** 走酒馆服务器转发请求(绕开浏览器跨域限制), 用于不支持 CORS 的接口 */
-    服务端转发: z.boolean().default(false),
-    /** 流式输出: 直连走 SSE, 转发走 should_stream */
+    // 转发开关已删除: 转发是唯一通路(浏览器直连那条支路已在 api.ts 里删掉),
+    // 老设置里残留的同名字段由 zod 忽略, 不会报错。
+    /** 流式输出: 交给酒馆服务器转发时对应 should_stream, 上游边生成边返回 */
     流式: z.boolean().default(false),
     温度: z.coerce
       .number()

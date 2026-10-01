@@ -448,7 +448,7 @@ function buildErrorReport(): string {
   const settingsNow = getSettings();
   const parts = [
     '[烟火] 报错报告',
-    `时间: ${fmtTimestamp(log?.time)} / 模型: ${settingsNow.接口.模型 || '(未选)'} / 服务端转发: ${settingsNow.接口.服务端转发 ? '开' : '关'}`,
+    `时间: ${fmtTimestamp(log?.time)} / 模型: ${settingsNow.接口.模型 || '(未选)'}`,
     ...(log?.replyIds?.length ? [`楼层: ${log.replyIds.map(id => `#${id}`).join(', ')}`] : []),
     ...(log?.request ? ['\n── 发送给世界引擎的内容 ──\n' + log.request] : []),
     ...(log?.response ? ['\n── 世界引擎输出 ──\n' + log.response] : []),
@@ -1338,11 +1338,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                   </label>
                 </div>
                 <div class="yh-toggles">
-                  <label class="yh-toggle">
-                    <input v-model="settings.接口.服务端转发" type="checkbox" />
-                    <span class="yh-toggle-track"></span>
-                    <span class="yh-toggle-text">走酒馆服务器转发请求<em>接口不支持浏览器跨域(CORS)时开启</em></span>
-                  </label>
+                  <!-- 转发开关已删除: 转发是唯一通路, 没有可切换的东西了 -->
                   <label class="yh-toggle">
                     <input v-model="settings.接口.流式" type="checkbox" />
                     <span class="yh-toggle-track"></span>

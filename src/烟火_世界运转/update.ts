@@ -317,7 +317,8 @@ export async function updateWorld(force = false): Promise<void> {
     const detail = [
       '[烟火] 世界推进失败',
       `阶段: ${parseError && parsed === null ? 'JSON 解析' : '接口调用/其他'}`,
-      `接口: ${maskBaseUrl(settingsNow.接口.地址) || '(未填)'} / 模型: ${settingsNow.接口.模型 || '(未选)'} / 最大token: ${settingsNow.接口.最大token} / 服务端转发: ${settingsNow.接口.服务端转发 ? '开' : '关'}`,
+      // 转发开关已删除, 这里不再打印它(字段没了, 打印只会是 undefined)
+      `接口: ${maskBaseUrl(settingsNow.接口.地址) || '(未填)'} / 模型: ${settingsNow.接口.模型 || '(未选)'} / 最大token: ${settingsNow.接口.最大token}`,
       `错误: ${message}`,
       ...(stack ? ['堆栈:', stack] : []),
     ].join('\n');

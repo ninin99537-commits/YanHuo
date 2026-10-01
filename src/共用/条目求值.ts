@@ -18,6 +18,10 @@
 //      一律照抄各自现状, 从 文案 进来(不在这里统一措辞)。
 // 另外这处共用语义照抄(两家一致, 但容易看错): 只有写成 `cell:表/...`(即 cond 里)的表才会被
 // 收集去取数, `<if cell="表/行/列 >= 值">` 自己引用的表不会被收集 —— 见 收集表格名。
+// 剩下几处只是写法不同、语义一样(逐函数比对过), 这里统一按烟火那份写:
+//   collectCellTables/findTopLevelElse 用 matchAll(彼方用 re.exec 循环)、findMatchingClose 用
+//   matchAll + `index < start`(彼方用 `re.lastIndex = start`)、logCellLookupFailure 带默认参数
+//   (彼方不带, 但两边调用点都传了两个实参)。
 // ---------------------------------------------------------------------------
 
 /** 一张 ACU 表格(来自 AutoCardUpdaterAPI.exportTableAsJson): 第一行是表头 */

@@ -4,7 +4,6 @@ import type { WorldData, WorldEvent, WorldFaction, WorldMetric, WorldOccasion, W
 import { EVENT_SCALE, EVENT_SECRECY, EVENT_SPREAD, EVENT_STAGE, METRIC_TREND, SEED_MATURITY } from './schema';
 import { getSettings } from './settings';
 import {
-  discardSnapshotAt,
   ENDED_EVENT_LIMIT,
   EVENT_HISTORY_LIMIT,
   EVENT_LIMIT,
@@ -14,12 +13,13 @@ import {
   REGION_LIMIT,
   SEED_LIMIT,
   TREND_LIMIT,
-  loadData,
   useDebugStore,
   useStateStore,
   useUpdatingStore,
-  writeStateSnapshot,
 } from './state';
+// 世界状态的落盘 / 读回 / 重推 / 清空都从这一个 module 进(候选 3): 不再自己拼 payload、
+// 不再自己管 store 的成功/失败两条分支、不再记"先撤销快照再重读"的顺序
+import { 世界状态存档 } from './保存世界状态';
 import { getActiveWorldbookText } from './worldbook-read';
 import { useHost } from './host';
 import { syncWorldbookEntry } from './inject';
@@ -173,7 +173,7 @@ export async function updateWorld(force = false): Promise<void> {
       toastWarning('烟火: 尚未配置接口地址或模型, 请先在设置中完成配置', '烟火');
       return;
     }
-    let data = loadData();
+    let data = 世界状态存档.读取();
     // 主角人设(名字+描述): 描述含"基本信息"等玩家自写资料, 整段原样发给世界引擎(不截断, 以正文实际视角为准), 拿不到也不影响
     let playerName: string | null = null;
     let playerDesc = '';
@@ -193,8 +193,8 @@ export async function updateWorld(force = false): Promise<void> {
         const tail = useHost().chat.messages(`${Math.max(0, lastId - 60)}-${lastId}`, { role: 'assistant' }).filter(message => !message.is_hidden);
         const lastAssistantFloor = tail.length > 0 ? tail[tail.length - 1].message_id : -1;
         if ((data.处理到楼层 ?? 0) >= lastAssistantFloor && lastAssistantFloor >= 0 && (data.锚点楼层 ?? -1) >= 0) {
-          discardSnapshotAt(data.锚点楼层);
-          data = loadData();
+          // 撤销锚点楼层的快照再重新读回(状态自动回落到更早快照): 顺序收在保存 module 里
+          data = 世界状态存档.重推(data.锚点楼层);
         }
       } catch {
         // 楼层读取失败则跳过撤销
@@ -288,16 +288,12 @@ export async function updateWorld(force = false): Promise<void> {
       removedEvents: diff.removed,
       summary: newData.小结,
     });
-    // 把推进后的世界整体写入本次分析的最后一条楼层(快照随该楼层存亡)
+    // 把推进后的世界整体写入本次分析的最后一条楼层(快照随该楼层存亡)。
+    // 「靠哪条楼层当锚点 / 处理到楼层 / 清空层 / 超额裁剪」以及往内存里放哪一份(成功与失败
+    // 两种结果)都由 保存 module 的「推进落盘」交代; 建仓仍排在落盘之前, 与改造前同序
     const anchorFloor = recent[recent.length - 1].message_id;
-    newData.处理到楼层 = anchorFloor;
-    newData.清空层 = 0;
     const stateStore = useStateStore();
-    if (writeStateSnapshot(newData, anchorFloor, anchorFloor, true)) {
-      stateStore.data = { ...newData, 锚点楼层: anchorFloor };
-    } else {
-      stateStore.data = newData;
-    }
+    stateStore.data = 世界状态存档.推进落盘(newData, anchorFloor).数据;
     // 同步世界动向到角色卡主世界书(蓝灯常驻条目), 供主 AI 读取
     if (settings.运转.注入世界书条目) {
       syncWorldbookEntry(newData, true, settings).catch(error => {

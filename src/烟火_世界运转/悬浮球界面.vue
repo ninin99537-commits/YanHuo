@@ -24,15 +24,17 @@ import { computed, ref, watch } from 'vue';
 import { chatCompletion, fetchModelList } from './api';
 import { syncWorldbookEntry } from './inject';
 import { buildInjectionPrompt } from './prompts';
-import type { WorldData, WorldEvent, WorldFaction } from './schema';
+import type { WorldData, WorldEvent } from './schema';
 import { getSettings, useSettingsStore } from './settings';
 import { useConsoleStore, useDebugStore, useStateStore, useUpdatingStore } from './state';
 import { toastError, toastInfo, toastSuccess, toastWarning } from './toast';
 import { updateWorld } from './update';
 import { 有世界数据 } from './世界数据';
 import { 事件枚举, 取层, 表单定义 } from './世界字段表';
+import type { 任意编辑会话, 事件编辑会话, 势力编辑会话, 条目编辑会话, 概述编辑会话 } from './世界编辑会话';
+import { 取消会话, 打开事件会话, 打开势力会话, 打开概述会话, 打开条目会话, 提交会话 } from './世界编辑会话';
 import type { 世界条目层 } from './世界数据变更';
-import { 保存事件, 保存势力, 保存世界概述, 保存世界条目, 建世界数据环境, 清空世界, 移除事件, 移除势力, 移除世界条目 } from './世界数据变更';
+import { 建世界数据环境, 清空世界, 移除事件, 移除势力, 移除世界条目 } from './世界数据变更';
 import { 取根变量 } from './主题';
 import WorldEditForm from './世界编辑表单.vue';
 import { 使用面板机制 } from './面板机制';
@@ -106,9 +108,11 @@ const occasionList = computed(() => world.value.节令 ?? []);
 const metricEntries = computed(() => Object.entries(world.value.指标 ?? {}));
 
 // ---- 世界页手动编辑: 五层共用一套「名称+字段」增删改 ----
-// 改数据一律走 世界数据变更.ts 那道门(它负责上限/同名/id 签发/落快照/同步世界书), 这里只管展示与草稿。
-// 字段清单(名字/标签/枚举/多行)只在 世界字段表.ts 一处(候选 4): 这里按层取, 不再手抄字段名——
-// 漏一处的旧毛病就是"界面能编辑但注入里没有", 或读快照时被悄悄丢掉。
+// 改数据一律走 世界数据变更.ts 那道门(它负责上限/同名/id 签发/落快照/同步世界书);
+// "正在编辑什么"由 世界编辑会话.ts 收着(候选 5): 打开/比较基准/冲突判定/提交/取消 全在那边,
+// 这里只消费它——以前五层条目/世界概述/事件/势力各写一份镜像草稿, 每份都自己"打开时拷进去、
+// 保存时拷出来", 三处手动同步, 还漏掉了"打开时那一条还在不在"的判断。
+// 字段清单(名字/标签/枚举/多行)只在 世界字段表.ts 一处(候选 4): 这里按层取, 不再手抄字段名。
 type WorldLayer = 世界条目层;
 const layerFields: Record<WorldLayer, { key: string; label: string; enum?: readonly string[]; multiline?: boolean }[]> = {
   地域: 表单定义(取层('地域')),
@@ -117,33 +121,37 @@ const layerFields: Record<WorldLayer, { key: string; label: string; enum?: reado
   节令: 表单定义(取层('节令')),
   指标: 表单定义(取层('指标')),
 };
-const worldEditing = ref(false);
-const worldDraft = ref<{ layer: WorldLayer; key: string; fields: Record<string, string> }>({ layer: '地域', key: '', fields: {} });
-/** 打开编辑时的原值: 只写用户真正改过的字段, 免得把编辑期间 AI 推进的结果一起盖掉 */
-const worldBase = ref<Record<string, string> | undefined>(undefined);
-function startWorldEdit(layer: WorldLayer, key: string, item: Record<string, unknown>) {
-  const fields: Record<string, string> = {};
-  for (const f of layerFields[layer]) fields[f.key] = String(item[f.key] ?? (f.key === '名称' || f.key === '标题' ? key : ''));
-  worldDraft.value = { layer, key, fields };
-  worldBase.value = { ...fields };
-  worldEditing.value = true;
+/** 唯一的编辑会话: 五层条目 / 事件 / 势力 / 世界概述 四类编辑共用这一个 */
+const 会话 = ref<任意编辑会话 | null>(null);
+/** 四个按种类收窄的视图: 只是让模板拿到自己那一份, 草稿仍然只有会话里那一个对象。
+ *  事件的这一个仍叫 editingEvent(模板与面板用例里的调用点都是这个名字): 它现在指向"在编的那条事件的会话",
+ *  认哪一条看的是会话里的 基准(打开时的原值), 不再是对象引用。 */
+const 条目会话 = computed<条目编辑会话 | null>(() => (会话.value?.目标.种类 === '条目' ? (会话.value as 条目编辑会话) : null));
+const editingEvent = computed<事件编辑会话 | null>(() => (会话.value?.目标.种类 === '事件' ? (会话.value as 事件编辑会话) : null));
+const 势力会话 = computed<势力编辑会话 | null>(() => (会话.value?.目标.种类 === '势力' ? (会话.value as 势力编辑会话) : null));
+const 概述会话 = computed<概述编辑会话 | null>(() => (会话.value?.目标.种类 === '概述' ? (会话.value as 概述编辑会话) : null));
+
+/** 取消: 会话丢掉就是取消(草稿只在会话里, 数据仓与快照一个字都不动) */
+function 取消编辑() {
+  会话.value = 取消会话();
+}
+
+/** 打开五层里的一条编辑(按层+名字从数据仓取当前那一条作基准, 不认模板里那个对象) */
+function startWorldEdit(layer: WorldLayer, key: string) {
+  会话.value = 打开条目会话(data.value, layer, key);
 }
 function startWorldAdd(layer: WorldLayer) {
-  const fields: Record<string, string> = {};
-  for (const f of layerFields[layer]) fields[f.key] = f.enum ? String(f.enum[0]) : '';
-  worldDraft.value = { layer, key: '', fields };
-  worldBase.value = undefined;
-  worldEditing.value = true;
+  会话.value = 打开条目会话(data.value, layer, '');
 }
 function saveWorldEdit() {
-  const { layer, key, fields } = worldDraft.value;
-  const 结果 = 保存世界条目(data.value, layer, key, fields, 建世界数据环境(), worldBase.value);
+  const 结果 = 提交会话(条目会话.value, data.value, 建世界数据环境());
+  if (!结果) return;
   if (结果.拒绝) {
     toastWarning(结果.拒绝, '烟火');
     return;
   }
   data.value = 结果.数据;
-  worldEditing.value = false;
+  取消编辑();
   toastSuccess(结果.说明, '烟火');
 }
 function removeWorldItem(layer: WorldLayer, key: string) {
@@ -153,7 +161,8 @@ function removeWorldItem(layer: WorldLayer, key: string) {
     return;
   }
   data.value = 结果.数据;
-  if (worldEditing.value && worldDraft.value.layer === layer && worldDraft.value.key === key) worldEditing.value = false;
+  // 删掉的正好是编辑框里那一条 → 编辑框跟着收起来
+  if (条目会话.value && 条目会话.value.草稿.layer === layer && 条目会话.value.草稿.key === key) 取消编辑();
   toastInfo(结果.说明, '烟火');
 }
 
@@ -207,26 +216,19 @@ watch(
   },
 );
 
-const editOpen = ref(false);
-const editDraft = ref({ 时间: '', 氛围: '', 总览: '' });
-const editBase = ref<{ 时间: string; 氛围: string; 总览: string } | undefined>(undefined);
+/** 打开世界概述编辑(时间/氛围/总览) */
 function openEdit() {
-  editDraft.value = {
-    时间: world.value.世界.时间,
-    氛围: world.value.世界.氛围,
-    总览: world.value.世界.总览,
-  };
-  editBase.value = { ...editDraft.value };
-  editOpen.value = true;
+  会话.value = 打开概述会话(data.value);
 }
 function saveEdit() {
-  const 结果 = 保存世界概述(data.value, editDraft.value, 建世界数据环境(), editBase.value);
+  const 结果 = 提交会话(概述会话.value, data.value, 建世界数据环境());
+  if (!结果) return;
   if (结果.拒绝) {
     toastWarning(结果.拒绝, '烟火');
     return;
   }
   data.value = 结果.数据;
-  editOpen.value = false;
+  取消编辑();
   toastSuccess(结果.说明);
 }
 function removeEvent(event: WorldEvent) {
@@ -252,58 +254,30 @@ function selectFaction(name: string) {
   tab.value = 'factions';
 }
 
-/** 事件编辑: 一次编辑一条。定位靠 id(不是对象引用)——AI 推进一次就会换掉整棵数据树, 引用当场失效 */
-const editingEvent = ref<WorldEvent | null>(null);
-const eventDraft = ref<WorldEvent>({
-  id: '',
-  标题: '',
-  描述: '',
-  地点: '',
-  时间: '',
-  规模: '要事',
-  传播: '本埠',
-  渠道: '',
-  势力: '',
-  阶段: '进行',
-  隐秘: '公开',
-  前情: '',
-  代表人物: '',
-  演变: [],
-});
-const eventBase = ref<WorldEvent | undefined>(undefined);
-/** 事件定位一律按 id(与 世界数据变更.ts 同一口径): AI 推进一次会整棵换掉数据树, 对象引用当场失效——
- *  按引用判断的话, 你正在编辑的事件框会在推进后凭空消失, 输入全丢 */
-function 同一条事件(编辑中: WorldEvent | null, 候选: WorldEvent) {
-  if (!编辑中) return false;
-  return 编辑中.id && 候选.id ? 编辑中.id === 候选.id : 编辑中.标题 === 候选.标题;
+/** 事件编辑: 一次编辑一条。定位靠 id(不是对象引用)——AI 推进一次就会换掉整棵数据树, 引用当场失效。
+ *  编辑框认的是"点开时那一条"(会话里的基准): id 对上就是同一条, 老快照没 id 时退回按标题认。 */
+function 同一条事件(在编: 任意编辑会话 | null, 候选: WorldEvent) {
+  if (!在编 || 在编.目标.种类 !== '事件') return false;
+  const 原 = 在编.基准 as WorldEvent | null;
+  if (!原) return false;
+  return 原.id && 候选.id ? 原.id === 候选.id : 原.标题 === 候选.标题;
 }
 function startEditEvent(event: WorldEvent) {
-  editingEvent.value = event;
-  eventDraft.value = { ...event };
-  eventBase.value = { ...event };
+  会话.value = 打开事件会话(event);
 }
 function saveEventEdit() {
-  const 结果 = 保存事件(data.value, eventDraft.value, 建世界数据环境(), eventBase.value);
+  const 结果 = 提交会话(editingEvent.value, data.value, 建世界数据环境());
+  if (!结果) return;
   if (结果.拒绝) {
     toastWarning(结果.拒绝, '烟火');
     return;
   }
   data.value = 结果.数据;
-  editingEvent.value = null;
+  取消编辑();
   toastSuccess(结果.说明);
 }
 
 /** 势力编辑(在脉络详情页) */
-const factionEditing = ref(false);
-const factionDraft = ref<WorldFaction>({
-  目标: '',
-  动向: '',
-  前情: '',
-  势力范围: '',
-  对外关系: '',
-  头面人物: '',
-});
-const factionBase = ref<WorldFaction | undefined>(undefined);
 /** 选中势力关联的进行中/最近事件(从事件的势力字段派生, 不让 AI 写) */
 const factionRelatedEvents = computed(() =>
   world.value.事件
@@ -312,23 +286,24 @@ const factionRelatedEvents = computed(() =>
     .reverse(),
 );
 function startEditFaction() {
-  if (!selectedFactionData.value) return;
-  factionDraft.value = { ...selectedFactionData.value };
-  factionBase.value = { ...selectedFactionData.value };
-  factionEditing.value = true;
+  // 名字不在清单里(那一行刚被推进换掉)就不打开, 与以前"没有可编辑的势力就不进编辑态"一致
+  const 新会话 = 打开势力会话(data.value, selectedFaction.value);
+  if (新会话) 会话.value = 新会话;
 }
 function saveFactionEdit() {
-  const 结果 = 保存势力(data.value, selectedFaction.value, factionDraft.value, 建世界数据环境(), factionBase.value);
+  const 结果 = 提交会话(势力会话.value, data.value, 建世界数据环境());
+  if (!结果) return;
   if (结果.拒绝) {
     toastWarning(结果.拒绝, '烟火');
     return;
   }
   data.value = 结果.数据;
-  factionEditing.value = false;
+  取消编辑();
   toastSuccess(结果.说明);
 }
 watch(selectedFaction, () => {
-  factionEditing.value = false;
+  // 换势力只关正在编辑的势力, 别的编辑(条目/事件/概述)不受影响
+  if (会话.value?.目标.种类 === '势力') 取消编辑();
 });
 
 // ---------------------------------------------------------------------------
@@ -634,9 +609,9 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                   <PhPlay v-else :size="13" weight="regular" />
                   {{ settings.运转.自动更新 ? '暂停自动' : '恢复自动' }}
                 </button>
-                <button class="yh-btn" @click="editOpen ? saveEdit() : openEdit()">
-                  <PhCheck v-if="editOpen" :size="13" weight="regular" />
-                  {{ editOpen ? '保存概述' : '修笔' }}
+                <button class="yh-btn" @click="概述会话 ? saveEdit() : openEdit()">
+                  <PhCheck v-if="概述会话" :size="13" weight="regular" />
+                  {{ 概述会话 ? '保存概述' : '修笔' }}
                 </button>
                 <button class="yh-btn yh-btn-danger" :class="{ 'is-confirm': confirmClear }" @click="clearWorld">
                   <PhTrash :size="13" weight="regular" />
@@ -645,15 +620,15 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
               </div>
             </div>
 
-            <div v-if="editOpen" class="yh-edit-grid">
+            <div v-if="概述会话" class="yh-edit-grid">
               <label class="yh-field">
                 <span class="yh-field-label">世界时间</span>
-                <input v-model="editDraft.时间" type="text" class="yh-input" placeholder="如 0137-06-12 07:45" />
+                <input v-model="概述会话.草稿.时间" type="text" class="yh-input" placeholder="如 0137-06-12 07:45" />
               </label>
               <label class="yh-field">
                 <span class="yh-field-label">氛围</span>
                 <input
-                  v-model="editDraft.氛围"
+                  v-model="概述会话.草稿.氛围"
                   type="text"
                   class="yh-input"
                   placeholder="一句当前世界整体氛围，非主角身边的氛围，而是整个世界的主调"
@@ -662,7 +637,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
               <label class="yh-field yh-field-wide">
                 <span class="yh-field-label">总览</span>
                 <textarea
-                  v-model="editDraft.总览"
+                  v-model="概述会话.草稿.总览"
                   class="yh-input yh-textarea"
                   rows="2"
                   placeholder="一两句世界总体走向"
@@ -740,41 +715,41 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                   <template v-if="同一条事件(editingEvent, event)">
                     <div class="yh-inline-edit">
                       <div class="yh-edit-row">
-                        <input v-model="eventDraft.标题" class="yh-input" placeholder="标题" />
-                        <input v-model="eventDraft.时间" class="yh-input" placeholder="时间" />
-                        <input v-model="eventDraft.地点" class="yh-input" placeholder="地点" />
+                        <input v-model="editingEvent!.草稿.标题" class="yh-input" placeholder="标题" />
+                        <input v-model="editingEvent!.草稿.时间" class="yh-input" placeholder="时间" />
+                        <input v-model="editingEvent!.草稿.地点" class="yh-input" placeholder="地点" />
                       </div>
                       <textarea
-                        v-model="eventDraft.描述"
+                        v-model="editingEvent!.草稿.描述"
                         class="yh-input yh-textarea"
                         rows="2"
                         placeholder="描述"
                       ></textarea>
-                      <input v-model="eventDraft.前情" class="yh-input" placeholder="前情（来龙去脉总结）" />
+                      <input v-model="editingEvent!.草稿.前情" class="yh-input" placeholder="前情（来龙去脉总结）" />
                       <div class="yh-edit-row">
-                        <select v-model="eventDraft.规模" class="yh-input yh-select">
+                        <select v-model="editingEvent!.草稿.规模" class="yh-input yh-select">
                           <option v-for="s in 规模选项" :key="s" :value="s">{{ s }}</option>
                         </select>
-                        <select v-model="eventDraft.传播" class="yh-input yh-select">
+                        <select v-model="editingEvent!.草稿.传播" class="yh-input yh-select">
                           <option v-for="s in 传播选项" :key="s" :value="s">{{ s }}</option>
                         </select>
-                        <select v-model="eventDraft.阶段" class="yh-input yh-select">
+                        <select v-model="editingEvent!.草稿.阶段" class="yh-input yh-select">
                           <option v-for="s in 阶段选项" :key="s" :value="s">{{ s }}</option>
                         </select>
                       </div>
                       <div class="yh-edit-row">
-                        <input v-model="eventDraft.渠道" class="yh-input" placeholder="渠道" />
-                        <input v-model="eventDraft.势力" class="yh-input" placeholder="关联势力" />
+                        <input v-model="editingEvent!.草稿.渠道" class="yh-input" placeholder="渠道" />
+                        <input v-model="editingEvent!.草稿.势力" class="yh-input" placeholder="关联势力" />
                       </div>
                       <div class="yh-edit-row">
                         <input
-                          v-model="eventDraft.代表人物"
+                          v-model="editingEvent!.草稿.代表人物"
                           class="yh-input"
                           placeholder="代表人物（头衔+名字，如 首席信息官·林素问）"
                         />
                       </div>
                       <div class="yh-edit-row">
-                        <select v-model="eventDraft.隐秘" class="yh-input yh-select">
+                        <select v-model="editingEvent!.草稿.隐秘" class="yh-input yh-select">
                           <option v-for="s in 隐秘选项" :key="s" :value="s">{{ s }}</option>
                         </select>
                       </div>
@@ -782,7 +757,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                         <button class="yh-btn yh-btn-primary yh-btn-sm" @click="saveEventEdit">
                           <PhCheck :size="12" weight="bold" />保存
                         </button>
-                        <button class="yh-btn yh-btn-sm" @click="editingEvent = null">取消</button>
+                        <button class="yh-btn yh-btn-sm" @click="取消编辑()">取消</button>
                       </div>
                     </div>
                   </template>
@@ -859,7 +834,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                 <div class="yh-detail-head">
                   <h3>{{ selectedFaction }}</h3>
                   <div class="yh-detail-actions">
-                    <button v-if="!factionEditing" class="yh-icon-btn" title="编辑此势力" @click="startEditFaction()">
+                    <button v-if="!势力会话" class="yh-icon-btn" title="编辑此势力" @click="startEditFaction()">
                       <PhPencilSimple :size="13" weight="regular" />
                     </button>
                     <button class="yh-icon-btn" title="移除此势力" @click="removeFaction(selectedFaction)">
@@ -867,7 +842,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                     </button>
                   </div>
                 </div>
-                <dl v-if="!factionEditing" class="yh-detail-rows">
+                <dl v-if="!势力会话" class="yh-detail-rows">
                   <div class="yh-detail-row">
                     <dt>目标</dt>
                     <dd>{{ selectedFactionData.目标 || '—' }}</dd>
@@ -908,20 +883,20 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                 <div v-else class="yh-inline-edit">
                   <label class="yh-field">
                     <span class="yh-field-label">目标</span>
-                    <textarea v-model="factionDraft.目标" class="yh-input yh-textarea" rows="2"></textarea>
+                    <textarea v-model="势力会话!.草稿.目标" class="yh-input yh-textarea" rows="2"></textarea>
                   </label>
                   <label class="yh-field">
                     <span class="yh-field-label">动向</span>
-                    <textarea v-model="factionDraft.动向" class="yh-input yh-textarea" rows="2"></textarea>
+                    <textarea v-model="势力会话!.草稿.动向" class="yh-input yh-textarea" rows="2"></textarea>
                   </label>
                   <label class="yh-field">
                     <span class="yh-field-label">前情（来龙去脉滚动总结）</span>
-                    <textarea v-model="factionDraft.前情" class="yh-input yh-textarea" rows="3"></textarea>
+                    <textarea v-model="势力会话!.草稿.前情" class="yh-input yh-textarea" rows="3"></textarea>
                   </label>
                   <label class="yh-field">
                     <span class="yh-field-label">势力范围（地盘与影响：地区/行业/阶层/渠道）</span>
                     <input
-                      v-model="factionDraft.势力范围"
+                      v-model="势力会话!.草稿.势力范围"
                       type="text"
                       class="yh-input"
                       placeholder="如 北境三城；垄断盐铁 / 好莱坞六大制片厂主导；无明确地盘"
@@ -930,7 +905,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                   <label class="yh-field">
                     <span class="yh-field-label">对外关系（与其他势力的关系，每方一条）</span>
                     <textarea
-                      v-model="factionDraft.对外关系"
+                      v-model="势力会话!.草稿.对外关系"
                       class="yh-input yh-textarea"
                       rows="2"
                       placeholder="如 与X商团盟约渐固；与Y帮派摩擦升级"
@@ -938,13 +913,13 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                   </label>
                   <label class="yh-field">
                     <span class="yh-field-label">头面人物（首领/掌门/对外代言人，头衔+名字）</span>
-                    <input v-model="factionDraft.头面人物" type="text" class="yh-input" placeholder="如 家主·林远山" />
+                    <input v-model="势力会话!.草稿.头面人物" type="text" class="yh-input" placeholder="如 家主·林远山" />
                   </label>
                   <div class="yh-edit-actions">
                     <button class="yh-btn yh-btn-primary yh-btn-sm" @click="saveFactionEdit">
                       <PhCheck :size="12" weight="bold" />保存
                     </button>
-                    <button class="yh-btn yh-btn-sm" @click="factionEditing = false">取消</button>
+                    <button class="yh-btn yh-btn-sm" @click="取消编辑()">取消</button>
                   </div>
                 </div>
                 <p class="yh-detail-hint">势力动向由世界推进自动维护, 也可在此手动修改(保存后同步注入)。</p>
@@ -970,18 +945,18 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                   </button>
                 </summary>
                 <world-edit-form
-                  v-if="worldEditing && worldDraft.layer === '大势'"
-                  :draft="worldDraft"
+                  v-if="条目会话 && 条目会话.草稿.layer === '大势'"
+                  :draft="条目会话.草稿"
                   :defs="layerFields['大势']"
                   @save="saveWorldEdit"
-                  @cancel="worldEditing = false"
+                  @cancel="取消编辑()"
                 />
                 <ul v-if="trendEntries.length > 0" class="yh-world-list">
                   <li v-for="[name, t] in trendEntries" :key="name" class="yh-world-card">
                     <div class="yh-world-card-head">
                       <strong>{{ name }}</strong>
                       <div class="yh-world-card-actions">
-                        <button class="yh-world-act" @click="startWorldEdit('大势', name, t)">
+                        <button class="yh-world-act" @click="startWorldEdit('大势', name)">
                           <PhPencilSimple :size="12" weight="regular" />
                         </button>
                         <button class="yh-world-act" @click="removeWorldItem('大势', name)">
@@ -1019,11 +994,11 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                   </button>
                 </summary>
                 <world-edit-form
-                  v-if="worldEditing && worldDraft.layer === '地域'"
-                  :draft="worldDraft"
+                  v-if="条目会话 && 条目会话.草稿.layer === '地域'"
+                  :draft="条目会话.草稿"
                   :defs="layerFields['地域']"
                   @save="saveWorldEdit"
-                  @cancel="worldEditing = false"
+                  @cancel="取消编辑()"
                 />
                 <ul v-if="regionEntries.length > 0" class="yh-world-list">
                   <li v-for="[name, r] in regionEntries" :key="name" class="yh-world-card">
@@ -1031,7 +1006,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                       <strong>{{ name }}</strong>
                       <span v-if="r.当权者" class="yh-world-delta">{{ r.当权者 }}</span>
                       <div class="yh-world-card-actions">
-                        <button class="yh-world-act" @click="startWorldEdit('地域', name, r)">
+                        <button class="yh-world-act" @click="startWorldEdit('地域', name)">
                           <PhPencilSimple :size="12" weight="regular" />
                         </button>
                         <button class="yh-world-act" @click="removeWorldItem('地域', name)">
@@ -1069,11 +1044,11 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                   </button>
                 </summary>
                 <world-edit-form
-                  v-if="worldEditing && worldDraft.layer === '伏笔'"
-                  :draft="worldDraft"
+                  v-if="条目会话 && 条目会话.草稿.layer === '伏笔'"
+                  :draft="条目会话.草稿"
                   :defs="layerFields['伏笔']"
                   @save="saveWorldEdit"
-                  @cancel="worldEditing = false"
+                  @cancel="取消编辑()"
                 />
                 <ul v-if="seedList.length > 0" class="yh-world-list">
                   <li v-for="seed in seedList" :key="seed.标题" class="yh-world-card">
@@ -1081,7 +1056,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                       <strong>{{ seed.标题 }}</strong>
                       <span class="yh-badge" :class="'yh-maturity-' + seed.成熟度">{{ seed.成熟度 }}</span>
                       <div class="yh-world-card-actions">
-                        <button class="yh-world-act" @click="startWorldEdit('伏笔', seed.标题, seed)">
+                        <button class="yh-world-act" @click="startWorldEdit('伏笔', seed.标题)">
                           <PhPencilSimple :size="12" weight="regular" />
                         </button>
                         <button class="yh-world-act" @click="removeWorldItem('伏笔', seed.标题)">
@@ -1115,11 +1090,11 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                   </button>
                 </summary>
                 <world-edit-form
-                  v-if="worldEditing && worldDraft.layer === '节令'"
-                  :draft="worldDraft"
+                  v-if="条目会话 && 条目会话.草稿.layer === '节令'"
+                  :draft="条目会话.草稿"
                   :defs="layerFields['节令']"
                   @save="saveWorldEdit"
-                  @cancel="worldEditing = false"
+                  @cancel="取消编辑()"
                 />
                 <ul v-if="occasionList.length > 0" class="yh-world-list">
                   <li v-for="o in occasionList" :key="o.名称" class="yh-world-card">
@@ -1128,7 +1103,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                       <span v-if="o.时间" class="yh-badge">{{ o.时间 }}</span>
                       <span v-if="o.周期" class="yh-world-delta">{{ o.周期 }}</span>
                       <div class="yh-world-card-actions">
-                        <button class="yh-world-act" @click="startWorldEdit('节令', o.名称, o)">
+                        <button class="yh-world-act" @click="startWorldEdit('节令', o.名称)">
                           <PhPencilSimple :size="12" weight="regular" />
                         </button>
                         <button class="yh-world-act" @click="removeWorldItem('节令', o.名称)">
@@ -1152,11 +1127,11 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                   </button>
                 </summary>
                 <world-edit-form
-                  v-if="worldEditing && worldDraft.layer === '指标'"
-                  :draft="worldDraft"
+                  v-if="条目会话 && 条目会话.草稿.layer === '指标'"
+                  :draft="条目会话.草稿"
                   :defs="layerFields['指标']"
                   @save="saveWorldEdit"
-                  @cancel="worldEditing = false"
+                  @cancel="取消编辑()"
                 />
                 <ul v-if="metricEntries.length > 0" class="yh-world-grid">
                   <li v-for="[name, m] in metricEntries" :key="name" class="yh-world-card yh-metric-card">
@@ -1164,7 +1139,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                       <span class="yh-metric-name">{{ name }}</span>
                       <span class="yh-metric-value">{{ m.值 }}</span>
                       <div class="yh-world-card-actions">
-                        <button class="yh-world-act" @click="startWorldEdit('指标', name, m)">
+                        <button class="yh-world-act" @click="startWorldEdit('指标', name)">
                           <PhPencilSimple :size="12" weight="regular" />
                         </button>
                         <button class="yh-world-act" @click="removeWorldItem('指标', name)">

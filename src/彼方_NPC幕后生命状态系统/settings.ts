@@ -19,7 +19,7 @@ const ApiConfigSchema = zod__WEBPACK_IMPORTED_MODULE_0__.z
     /** 流式输出: 开=逐 token 接收(可实时看到输出进度, 部分模型更稳定); 关=一次性返回完整结果(更简单)。请求统一由酒馆服务器转发, 对应 should_stream */
     流式: zod__WEBPACK_IMPORTED_MODULE_0__.z.boolean().default(false),
     温度: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(0.7).transform(value => _.clamp(value, 0, 2)),
-    最大token: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(2048).transform(value => Math.max(1, Math.min(131072, Math.round(value)))),
+    最大token: zod__WEBPACK_IMPORTED_MODULE_0__.z.coerce.number().default(60000).transform(value => Math.max(1, Math.min(131072, Math.round(value)))),
 })
     .prefault({});
 const Settings = zod__WEBPACK_IMPORTED_MODULE_0__.z

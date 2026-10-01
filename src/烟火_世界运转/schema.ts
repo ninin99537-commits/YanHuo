@@ -17,7 +17,7 @@ export const ApiConfigSchema = z
       .transform(value => _.clamp(value, 0, 2)),
     最大token: z.coerce
       .number()
-      .default(2048)
+      .default(60000)
       .transform(value => Math.max(1, Math.min(131072, Math.round(value)))),
   })
   .prefault({});

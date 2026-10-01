@@ -1332,7 +1332,6 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                       type="number"
                       min="1"
                       max="131072"
-                      step="128"
                       class="yh-input"
                     />
                   </label>

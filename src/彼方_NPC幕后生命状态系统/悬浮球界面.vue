@@ -502,7 +502,7 @@
                         </div>
                         <div class="bf-pair">
                           <span class="bf-label">最大输出Token</span>
-                          <input v-model.number="settings.接口.最大token" class="bf-input bf-input-num" type="number" min="1" max="131072" step="1024" />
+                          <input v-model.number="settings.接口.最大token" class="bf-input bf-input-num" type="number" min="1" max="131072" />
                         </div>
                       </div>
                       <label class="bf-toggle">

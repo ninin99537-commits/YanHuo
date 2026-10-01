@@ -28,9 +28,12 @@ import { buildInjectionPrompt } from './prompts';
 import type { WorldData, WorldEvent, WorldFaction } from './schema';
 import { METRIC_TREND, SEED_MATURITY } from './schema';
 import { getSettings, useSettingsStore } from './settings';
-import { clearAllData, UI_KEY, useConsoleStore, useDebugStore, useStateStore, useUpdatingStore } from './state';
+import { UI_KEY, useConsoleStore, useDebugStore, useStateStore, useUpdatingStore } from './state';
 import { setToastAnchor, setToastColors, toastError, toastInfo, toastSuccess, toastWarning } from './toast';
 import { updateWorld } from './update';
+import { 有世界数据 } from './世界数据';
+import type { 世界条目层 } from './世界数据变更';
+import { 保存事件, 保存势力, 保存世界概述, 保存世界条目, 建世界数据环境, 清空世界, 移除事件, 移除势力, 移除世界条目 } from './世界数据变更';
 import WorldEditForm from './世界编辑表单.vue';
 
 // ---------------------------------------------------------------------------
@@ -540,19 +543,8 @@ function onPanelPointerDown(e: PointerEvent) {
 // ---------------------------------------------------------------------------
 
 const world = computed<WorldData>(() => data.value);
-const hasWorld = computed(() =>
-  Boolean(
-    world.value.世界.时间 ||
-    world.value.世界.总览 ||
-    world.value.事件.length > 0 ||
-    Object.keys(world.value.势力).length > 0 ||
-    Object.keys(world.value.地域 ?? {}).length > 0 ||
-    Object.keys(world.value.大势 ?? {}).length > 0 ||
-    (world.value.伏笔 ?? []).length > 0 ||
-    (world.value.节令 ?? []).length > 0 ||
-    Object.keys(world.value.指标 ?? {}).length > 0,
-  ),
-);
+// 「这个世界有没有数据」问同一处(有世界数据): 别处再写一遍, 迟早两处口径不一致
+const hasWorld = computed(() => 有世界数据(world.value));
 const activeEvents = computed(() =>
   world.value.事件
     .filter(event => event.阶段 !== '已结束')
@@ -567,7 +559,8 @@ const occasionList = computed(() => world.value.节令 ?? []);
 const metricEntries = computed(() => Object.entries(world.value.指标 ?? {}));
 
 // ---- 世界页手动编辑: 五层共用一套「名称+字段」增删改 ----
-type WorldLayer = '地域' | '大势' | '伏笔' | '节令' | '指标';
+// 改数据一律走 世界数据变更.ts 那道门(它负责上限/同名/id 签发/落快照/同步世界书), 这里只管展示与草稿
+type WorldLayer = 世界条目层;
 const layerFields: Record<WorldLayer, { key: string; label: string; enum?: readonly string[]; multiline?: boolean }[]> = {
   地域: [
     { key: '名称', label: '名称' },
@@ -606,57 +599,42 @@ const layerFields: Record<WorldLayer, { key: string; label: string; enum?: reado
 };
 const worldEditing = ref(false);
 const worldDraft = ref<{ layer: WorldLayer; key: string; fields: Record<string, string> }>({ layer: '地域', key: '', fields: {} });
+/** 打开编辑时的原值: 只写用户真正改过的字段, 免得把编辑期间 AI 推进的结果一起盖掉 */
+const worldBase = ref<Record<string, string> | undefined>(undefined);
 function startWorldEdit(layer: WorldLayer, key: string, item: Record<string, unknown>) {
   const fields: Record<string, string> = {};
   for (const f of layerFields[layer]) fields[f.key] = String(item[f.key] ?? (f.key === '名称' || f.key === '标题' ? key : ''));
   worldDraft.value = { layer, key, fields };
+  worldBase.value = { ...fields };
   worldEditing.value = true;
 }
 function startWorldAdd(layer: WorldLayer) {
   const fields: Record<string, string> = {};
   for (const f of layerFields[layer]) fields[f.key] = f.enum ? String(f.enum[0]) : '';
   worldDraft.value = { layer, key: '', fields };
+  worldBase.value = undefined;
   worldEditing.value = true;
 }
 function saveWorldEdit() {
   const { layer, key, fields } = worldDraft.value;
-  const nameKey = layer === '伏笔' ? '标题' : '名称';
-  const name = String(fields[nameKey] ?? '').trim();
-  if (!name) {
-    toastWarning('名称不能为空', '烟火');
+  const 结果 = 保存世界条目(data.value, layer, key, fields, 建世界数据环境(), worldBase.value);
+  if (结果.拒绝) {
+    toastWarning(结果.拒绝, '烟火');
     return;
   }
-  const d = data.value as any;
-  if (layer === '地域' || layer === '大势' || layer === '指标') {
-    const store = (d[layer] ??= {}) as Record<string, Record<string, string>>;
-    const payload: Record<string, string> = {};
-    for (const f of layerFields[layer]) if (f.key !== '名称') payload[f.key] = String(fields[f.key] ?? '');
-    if (key && key !== name) delete store[key];
-    store[name] = { ...store[name], ...payload };
-  } else if (layer === '伏笔') {
-    const arr = (d.伏笔 ??= []) as any[];
-    const idx = key ? arr.findIndex(item => item.标题 === key) : -1;
-    const entry = { 标题: name, 埋设: fields.埋设 ?? '', 指向: fields.指向 ?? '', 成熟度: fields.成熟度 ?? '酝酿', 前情: fields.前情 ?? '' };
-    if (idx >= 0) arr[idx] = entry;
-    else arr.push(entry);
-  } else {
-    const arr = (d.节令 ??= []) as any[];
-    const idx = key ? arr.findIndex(item => item.名称 === key) : -1;
-    const entry = { 名称: name, 周期: fields.周期 ?? '', 时间: fields.时间 ?? '', 概况: fields.概况 ?? '' };
-    if (idx >= 0) arr[idx] = entry;
-    else arr.push(entry);
-  }
-  saveAndSync();
+  data.value = 结果.数据;
   worldEditing.value = false;
-  toastSuccess(`已保存${layer}「${name}」, 注入内容已同步`, '烟火');
+  toastSuccess(结果.说明, '烟火');
 }
 function removeWorldItem(layer: WorldLayer, key: string) {
-  const d = data.value as any;
-  if (layer === '地域' || layer === '大势' || layer === '指标') delete (d[layer] ?? {})[key];
-  else if (layer === '伏笔') d.伏笔 = (d.伏笔 ?? []).filter((item: any) => item.标题 !== key);
-  else d.节令 = (d.节令 ?? []).filter((item: any) => item.名称 !== key);
+  const 结果 = 移除世界条目(data.value, layer, key, 建世界数据环境());
+  if (结果.拒绝) {
+    toastWarning(结果.拒绝, '烟火');
+    return;
+  }
+  data.value = 结果.数据;
   if (worldEditing.value && worldDraft.value.layer === layer && worldDraft.value.key === key) worldEditing.value = false;
-  saveAndSync();
+  toastInfo(结果.说明, '烟火');
 }
 
 const stageFilter = ref<'全部' | '进行中' | '已结束'>('全部');
@@ -689,17 +667,8 @@ function fmtTimestamp(timestamp?: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// 手动编辑(修笔) — 所有编辑保存后立即落快照并同步世界书注入
+// 手动编辑(修笔) — 所有编辑都经 世界数据变更.ts: 它落快照 + 同步世界书注入 + 返回新数据
 // ---------------------------------------------------------------------------
-
-/** 保存世界数据并同步「【烟火】世界动向」注入内容(开关关闭时同步会删除条目) */
-function saveAndSync() {
-  stateStore.save();
-  const s = getSettings();
-  syncWorldbookEntry(stateStore.data, s.启用运转 && s.运转.注入世界书条目, s).catch(error => {
-    console.error('[烟火] 手动编辑后同步世界书条目失败:', error);
-  });
-}
 
 /** 切换「启用世界运转」/「注入世界动向到主AI」时立即生效: 关=删条目, 开=建/刷新条目 */
 watch(
@@ -713,38 +682,50 @@ watch(
 
 const editOpen = ref(false);
 const editDraft = ref({ 时间: '', 氛围: '', 总览: '' });
+const editBase = ref<{ 时间: string; 氛围: string; 总览: string } | undefined>(undefined);
 function openEdit() {
   editDraft.value = {
     时间: world.value.世界.时间,
     氛围: world.value.世界.氛围,
     总览: world.value.世界.总览,
   };
+  editBase.value = { ...editDraft.value };
   editOpen.value = true;
 }
 function saveEdit() {
-  data.value.世界.时间 = editDraft.value.时间.trim();
-  data.value.世界.氛围 = editDraft.value.氛围.trim();
-  data.value.世界.总览 = editDraft.value.总览.trim();
-  saveAndSync();
+  const 结果 = 保存世界概述(data.value, editDraft.value, 建世界数据环境(), editBase.value);
+  if (结果.拒绝) {
+    toastWarning(结果.拒绝, '烟火');
+    return;
+  }
+  data.value = 结果.数据;
   editOpen.value = false;
-  toastSuccess('已保存世界概述, 注入内容已同步');
+  toastSuccess(结果.说明);
 }
 function removeEvent(event: WorldEvent) {
-  data.value.事件 = data.value.事件.filter(item => item !== event);
-  saveAndSync();
-  toastInfo(`已移除事件「${event.标题}」, 注入内容已同步`, '烟火');
+  const 结果 = 移除事件(data.value, event.id, 建世界数据环境());
+  if (结果.拒绝) {
+    toastWarning(结果.拒绝, '烟火');
+    return;
+  }
+  data.value = 结果.数据;
+  toastInfo(结果.说明, '烟火');
 }
 function removeFaction(name: string) {
-  delete data.value.势力[name];
-  saveAndSync();
-  toastInfo(`已移除势力「${name}」, 注入内容已同步`, '烟火');
+  const 结果 = 移除势力(data.value, name, 建世界数据环境());
+  if (结果.拒绝) {
+    toastWarning(结果.拒绝, '烟火');
+    return;
+  }
+  data.value = 结果.数据;
+  toastInfo(结果.说明, '烟火');
 }
 function selectFaction(name: string) {
   selectedFaction.value = name;
   tab.value = 'factions';
 }
 
-/** 事件编辑: 一次编辑一条, 按对象引用定位 */
+/** 事件编辑: 一次编辑一条。定位靠 id(不是对象引用)——AI 推进一次就会换掉整棵数据树, 引用当场失效 */
 const editingEvent = ref<WorldEvent | null>(null);
 const eventDraft = ref<WorldEvent>({
   id: '',
@@ -762,22 +743,21 @@ const eventDraft = ref<WorldEvent>({
   代表人物: '',
   演变: [],
 });
+const eventBase = ref<WorldEvent | undefined>(undefined);
 function startEditEvent(event: WorldEvent) {
   editingEvent.value = event;
   eventDraft.value = { ...event };
+  eventBase.value = { ...event };
 }
 function saveEventEdit() {
-  const idx = data.value.事件.indexOf(editingEvent.value);
-  if (idx >= 0) {
-    data.value.事件[idx] = {
-      ...eventDraft.value,
-      标题: eventDraft.value.标题.trim() || '未命名事件',
-      描述: eventDraft.value.描述.trim() || '（无描述）',
-    };
-    saveAndSync();
-    toastSuccess('已保存事件修改, 注入内容已同步');
+  const 结果 = 保存事件(data.value, eventDraft.value, 建世界数据环境(), eventBase.value);
+  if (结果.拒绝) {
+    toastWarning(结果.拒绝, '烟火');
+    return;
   }
+  data.value = 结果.数据;
   editingEvent.value = null;
+  toastSuccess(结果.说明);
 }
 
 /** 势力编辑(在脉络详情页) */
@@ -790,6 +770,7 @@ const factionDraft = ref<WorldFaction>({
   对外关系: '',
   头面人物: '',
 });
+const factionBase = ref<WorldFaction | undefined>(undefined);
 /** 选中势力关联的进行中/最近事件(从事件的势力字段派生, 不让 AI 写) */
 const factionRelatedEvents = computed(() =>
   world.value.事件
@@ -800,16 +781,18 @@ const factionRelatedEvents = computed(() =>
 function startEditFaction() {
   if (!selectedFactionData.value) return;
   factionDraft.value = { ...selectedFactionData.value };
+  factionBase.value = { ...selectedFactionData.value };
   factionEditing.value = true;
 }
 function saveFactionEdit() {
-  const name = selectedFaction.value;
-  if (name && data.value.势力[name]) {
-    data.value.势力[name] = { ...factionDraft.value };
-    saveAndSync();
-    toastSuccess('已保存势力修改, 注入内容已同步');
+  const 结果 = 保存势力(data.value, selectedFaction.value, factionDraft.value, 建世界数据环境(), factionBase.value);
+  if (结果.拒绝) {
+    toastWarning(结果.拒绝, '烟火');
+    return;
   }
+  data.value = 结果.数据;
   factionEditing.value = false;
+  toastSuccess(结果.说明);
 }
 watch(selectedFaction, () => {
   factionEditing.value = false;
@@ -835,14 +818,9 @@ async function clearWorld() {
     return;
   }
   confirmClear.value = false;
-  clearAllData();
-  stateStore.reload();
-  // 清空后世界为空, 删除角色卡主世界书里的「世界动向」条目(对齐彼方清空逻辑)
-  const s = getSettings();
-  syncWorldbookEntry(stateStore.data, false, s).catch(error => {
-    console.error('[烟火] 清空后删除世界书条目失败:', error);
-  });
-  toastSuccess('世界已归零: 快照清空, 世界书条目已删除, 之后只推进新楼层');
+  const 结果 = 清空世界(建世界数据环境());
+  data.value = 结果.数据;
+  toastSuccess(结果.说明);
 }
 
 // ---------------------------------------------------------------------------

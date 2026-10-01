@@ -1,10 +1,14 @@
 import type { WorldData, WorldEvent, WorldFaction } from './schema';
-import { EVENT_SCALE, EVENT_SECRECY, EVENT_SPREAD, EVENT_STAGE, METRIC_TREND, SEED_MATURITY } from './schema';
+import { EVENT_SCALE, EVENT_SECRECY, EVENT_SPREAD, EVENT_STAGE } from './schema';
 import { getSettings } from './settings';
-import { clearAllData, emptyData, ENDED_EVENT_LIMIT, EVENT_LIMIT, FACTION_LIMIT, METRIC_LIMIT, OCCASION_LIMIT, REGION_LIMIT, saveData, SEED_LIMIT, TREND_LIMIT } from './state';
+import { clearAllData, emptyData, ENDED_EVENT_LIMIT, EVENT_LIMIT, saveData } from './state';
 import { syncWorldbookEntry } from './inject';
 import { toastWarning } from './toast';
 import { pickEnum, 签事件id, 有世界数据 } from './世界数据';
+import type { 世界条目层, 世界层定义 } from './世界字段表';
+import { 取层, 字段值, 内容字段, 全部字段 } from './世界字段表';
+
+export type { 世界条目层 };
 
 /**
  * 「世界数据变更」: 改世界数据的唯一一道门。
@@ -60,31 +64,21 @@ export interface 变更返回 {
 /** 五层常驻档案: 前三个是「名称→字段」的映射, 伏笔/节令是数组 */
 export type 世界条目层 = '地域' | '大势' | '指标' | '伏笔' | '节令';
 
-const 映射层字段: Record<'地域' | '大势' | '指标', string[]> = {
-  地域: ['概况', '局势', '当权者', '对外关系', '前情'],
-  大势: ['概况', '进展', '走向', '前情'],
-  指标: ['值', '趋势', '说明'],
-};
-
-const 层上限: Record<世界条目层, number> = {
-  地域: REGION_LIMIT,
-  大势: TREND_LIMIT,
-  指标: METRIC_LIMIT,
-  伏笔: SEED_LIMIT,
-  节令: OCCASION_LIMIT,
-};
-
-function 是映射层(层: 世界条目层): 层 is '地域' | '大势' | '指标' {
-  return 层 === '地域' || 层 === '大势' || 层 === '指标';
-}
-
-/** 名字键: 伏笔用「标题」, 其余都用「名称」 */
-function 名字键(层: 世界条目层): string {
-  return 层 === '伏笔' ? '标题' : '名称';
+/** 五层常驻档案的层名与字段清单只在 世界字段表.ts 一处(候选 4): 这里按层名取定义,
+ *  上限 / 名称键 / 字段(含枚举与兜底) / 该写进条目还是数组 全从表来 */
+function 层定义(层: 世界条目层): 世界层定义 {
+  return 取层(层);
 }
 
 function 文本(值: unknown): string {
   return String(值 ?? '').trim();
+}
+
+/** 按字段表拼一条「名称→字段」或数组条目的最终值(名称那一条由调用方给) */
+function 表条目(定义: 世界层定义, 字段: Record<string, any>, 名称?: string): Record<string, string> {
+  const 条目: Record<string, string> = {};
+  for (const f of 全部字段(定义)) 条目[f.键] = f.键 === 定义.名称键 && 定义.名称键 ? (名称 ?? '') : 字段值(f, 字段[f.键]);
+  return 条目;
 }
 
 function 拒绝(数据: WorldData, 原因: string): 变更返回 {
@@ -151,22 +145,23 @@ export function 保存世界条目(
   环境: 世界数据环境,
   基准?: Record<string, string>,
 ): 变更返回 {
-  const 键 = 名字键(层);
+  const 定义 = 层定义(层);
+  const 键 = 定义.名称键;
   const 旧名 = 文本(原名);
   const 名字 = 文本(草稿[键]);
   if (!名字) return 拒绝(数据, `${键}不能为空`);
-  const 上限 = 层上限[层];
+  const 上限 = 定义.容量;
 
-  if (是映射层(层)) {
+  if (定义.形态 === '映射') {
     const 表 = { ...((数据[层] ?? {}) as Record<string, Record<string, string>>) };
     const 目标名 = 名字.slice(0, 30);
     if (目标名 !== 旧名 && 表[目标名]) return 拒绝(数据, `「${目标名}」已经存在, 请换个名字`);
     const 旧条目 = (旧名 ? 表[旧名] : undefined) ?? {};
     if (!旧名 && Object.keys(表).length >= 上限) return 拒绝(数据, `${层}最多 ${上限} 条, 请先删掉一条再添加`);
     const 字段 = 只写改动(草稿, 基准, 旧条目);
+    // 枚举字段(指标的「趋势」)按表纠偏, 其余去首尾空白——与 AI 那条路同一把尺
     const 新条目: Record<string, string> = {};
-    for (const f of 映射层字段[层]) 新条目[f] = 文本(字段[f]);
-    if (层 === '指标') 新条目.趋势 = pickEnum(字段.趋势, METRIC_TREND, '平稳');
+    for (const f of 内容字段(定义)) 新条目[f.键] = 字段值(f, 字段[f.键]);
     if (旧名 && 旧名 !== 目标名) delete 表[旧名];
     表[目标名] = 新条目;
     return 落盘并同步({ ...数据, [层]: 表 } as WorldData, 环境, `已保存${层}「${目标名}」, 注入内容已同步`);
@@ -178,9 +173,7 @@ export function 保存世界条目(
   if (列表.some((条目, i) => 条目[键] === 目标名 && i !== 位置)) return 拒绝(数据, `「${目标名}」已经存在, 请换个名字`);
   if (位置 < 0 && 列表.length >= 上限) return 拒绝(数据, `${层}最多 ${上限} 条, 请先删掉一条再添加`);
   const 字段 = 只写改动(草稿, 基准, 位置 >= 0 ? 列表[位置] : {});
-  const 条目 = 层 === '伏笔'
-    ? { 标题: 目标名, 埋设: 文本(字段.埋设), 指向: 文本(字段.指向), 成熟度: pickEnum(字段.成熟度, SEED_MATURITY, '酝酿'), 前情: 文本(字段.前情) }
-    : { 名称: 目标名, 周期: 文本(字段.周期), 时间: 文本(字段.时间), 概况: 文本(字段.概况) };
+  const 条目 = 表条目(定义, 字段, 目标名);
   if (位置 >= 0) 列表[位置] = 条目;
   else 列表.push(条目);
   return 落盘并同步({ ...数据, [层]: 列表 } as WorldData, 环境, `已保存${层}「${目标名}」, 注入内容已同步`);
@@ -189,12 +182,13 @@ export function 保存世界条目(
 /** 移除五层里的一条(按名字找, 不按对象引用) */
 export function 移除世界条目(数据: WorldData, 层: 世界条目层, 名: string, 环境: 世界数据环境): 变更返回 {
   const 目标 = 文本(名);
-  if (是映射层(层)) {
+  const 定义 = 层定义(层);
+  if (定义.形态 === '映射') {
     const 表 = { ...((数据[层] ?? {}) as Record<string, unknown>) };
     delete 表[目标];
     return 落盘并同步({ ...数据, [层]: 表 } as WorldData, 环境, `已移除${层}「${目标}」, 注入内容已同步`);
   }
-  const 键 = 名字键(层);
+  const 键 = 定义.名称键;
   const 列表 = ((数据[层] ?? []) as any[]).filter(条目 => 条目[键] !== 目标);
   return 落盘并同步({ ...数据, [层]: 列表 } as WorldData, 环境, `已移除${层}「${目标}」, 注入内容已同步`);
 }
@@ -252,31 +246,19 @@ export function 保存势力(数据: WorldData, 原名: string, 草稿: WorldFac
   const 旧条目 = 数据.势力?.[名];
   if (!名 || !旧条目) return 拒绝(数据, '这条势力已经不在清单里了');
   const 字段 = 只写改动(草稿 as unknown as Record<string, any>, 基准 as unknown as Record<string, any> | undefined, 旧条目 as unknown as Record<string, any>);
-  const 条目: WorldFaction = {
-    目标: 文本(字段.目标),
-    动向: 文本(字段.动向),
-    前情: 文本(字段.前情),
-    势力范围: 文本(字段.势力范围),
-    对外关系: 文本(字段.对外关系),
-    头面人物: 文本(字段.头面人物),
-  };
+  // 势力字段清单(含「前情」这类滚动字段)只在 世界字段表.ts: 这里按表拼条目, 不整对象覆盖
+  const 条目 = 表条目(取层('势力'), 字段) as unknown as WorldFaction;
   return 落盘并同步({ ...数据, 势力: { ...数据.势力, [名]: 条目 } }, 环境, '已保存势力修改, 注入内容已同步');
 }
 
 /** 添加一条势力(面板目前没有这条路, 留着给"手动建势力"用; 上限与 AI 那条路同一把尺) */
 export function 添加势力(数据: WorldData, 名: string, 草稿: WorldFaction, 环境: 世界数据环境): 变更返回 {
+  const 势力层 = 取层('势力');
   const 目标名 = 文本(名).slice(0, 30);
   if (!目标名) return 拒绝(数据, '势力名不能为空');
   if (数据.势力?.[目标名]) return 拒绝(数据, `「${目标名}」已经存在, 请换个名字`);
-  if (Object.keys(数据.势力 ?? {}).length >= FACTION_LIMIT) return 拒绝(数据, `势力最多 ${FACTION_LIMIT} 条, 请先删掉一条再添加`);
-  const 条目: WorldFaction = {
-    目标: 文本(草稿.目标),
-    动向: 文本(草稿.动向),
-    前情: 文本(草稿.前情),
-    势力范围: 文本(草稿.势力范围),
-    对外关系: 文本(草稿.对外关系),
-    头面人物: 文本(草稿.头面人物),
-  };
+  if (Object.keys(数据.势力 ?? {}).length >= 势力层.容量) return 拒绝(数据, `势力最多 ${势力层.容量} 条, 请先删掉一条再添加`);
+  const 条目 = 表条目(势力层, 草稿 as unknown as Record<string, any>) as unknown as WorldFaction;
   return 落盘并同步({ ...数据, 势力: { ...数据.势力, [目标名]: 条目 } }, 环境, `已添加势力「${目标名}」, 注入内容已同步`);
 }
 

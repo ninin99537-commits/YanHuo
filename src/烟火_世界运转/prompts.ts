@@ -1,7 +1,8 @@
 import referenceText from './gemini37f_reference.txt?raw';
 import doupoText from './gemini37f_doupo.txt?raw';
 import type { Settings, WorldData, WorldEvent } from './schema';
-import { EVENT_LIMIT, FACTION_LIMIT, METRIC_LIMIT, OCCASION_LIMIT, REGION_LIMIT, SEED_LIMIT, TREND_LIMIT } from './state';
+import { EVENT_LIMIT } from './state';
+import { FACTION_LIMIT, METRIC_LIMIT, OCCASION_LIMIT, REGION_LIMIT, SEED_LIMIT, TREND_LIMIT, 取层, 注入表头, 注入行, 提示词JSON示例, 档案层顺序, 该注入 } from './世界字段表';
 
 export const SYSTEM_PROMPT = `你是「烟火」——运行在角色扮演酒馆里的世界运转引擎: 主角看不见的地方, 世界也在按自己的因果主动运转。每次剧情更新后, 你负责推进幕后世界: 时间流逝、地域局势、大势流动、伏笔成熟、节令到来、指标涨落, 以及由此长出的公共事件。
 
@@ -75,7 +76,7 @@ Step 4 维护旧账: 事件与势力逐条过——有变化改对应字段, 无
 Step 5 输出 JSON。
 
 输出要求: 只输出一个 JSON 对象, 不要解释文字, 不要 markdown 围栏; **键名必须与下面模板完全一致(中文键名), 不要把键名翻译成英文**; **事件的 id 字段: 旧事件填它原有的 id 原样带回, 全新事件留空 "" 由脚本签发, 严禁编造或复用 id**:
-{"世界":{"时间":"...","氛围":"一句整个世界的主调(不是主角身边的氛围)","总览":"一两句世界总体走向"},"地域":{"名称":{"概况":"...","局势":"...","当权者":"...","对外关系":"...","前情":"..."}},"大势":{"名称":{"概况":"...","进展":"...","走向":"...","前情":"..."}},"伏笔":[{"标题":"...","埋设":"...","指向":"...","成熟度":"酝酿","前情":"..."}],"节令":[{"名称":"...","周期":"...","时间":"...","概况":"..."}],"指标":{"名称":{"值":"...","趋势":"平稳","说明":"..."}},"事件":[{"id":"","标题":"...","描述":"...","前情":"...","变化":"...","地点":"...","时间":"...","规模":"要事","传播":"本埠","渠道":"闲话","势力":"","代表人物":"","阶段":"进行","隐秘":"公开"}],"势力":{"势力名":{"目标":"...","动向":"...","前情":"...","势力范围":"...","对外关系":"...","头面人物":"..."}},"小结":"一句话概括本次世界推进, 无事则写'无事'"}`;
+{"世界":{"时间":"...","氛围":"一句整个世界的主调(不是主角身边的氛围)","总览":"一两句世界总体走向"},${档案层顺序.map(名 => 提示词JSON示例(取层(名))).join(',')},"事件":[{"id":"","标题":"...","描述":"...","前情":"...","变化":"...","地点":"...","时间":"...","规模":"要事","传播":"本埠","渠道":"闲话","势力":"","代表人物":"","阶段":"进行","隐秘":"公开"}],${提示词JSON示例(取层('势力'))},"小结":"一句话概括本次世界推进, 无事则写'无事'"}`;
 
 /** 破限系统段(开关开启时追加到系统提示词末尾) */
 const JB_SYSTEM = `
@@ -220,54 +221,49 @@ export function buildInjectionPrompt(data: WorldData, settings: Settings): strin
   if (world.总览) head.push(`总览: ${world.总览}`);
   if (head.length > 0) lines.push(head.join('\n'));
 
-  // 大势
-  const trends = Object.entries(data.大势 ?? {}).filter(([, t]) => t && (t.进展 || t.概况));
+  // 五层与势力清单的注入表(表头/列序/判据全在 世界字段表.ts, 这里只按层生成; 候选 4)
+  const 大势层 = 取层('大势');
+  const trends = Object.entries(data.大势 ?? {}).filter(([, t]) => t && 该注入(大势层, t));
   if (trends.length > 0) {
     lines.push('大势(世界层面正在流动的趋势):');
-    lines.push('大势 | 概况 | 进展 | 走向 | 前情');
-    for (const [name, t] of trends) {
-      lines.push([name, t.概况 || '—', t.进展 || '—', t.走向 || '—', t.前情 || '—'].join(' | '));
-    }
+    lines.push(注入表头(大势层));
+    for (const [name, t] of trends) lines.push(注入行(大势层, name, t));
   }
 
   // 地域
-  const regions = Object.entries(data.地域 ?? {}).filter(([, r]) => r && (r.局势 || r.概况));
+  const 地域层 = 取层('地域');
+  const regions = Object.entries(data.地域 ?? {}).filter(([, r]) => r && 该注入(地域层, r));
   if (regions.length > 0) {
     lines.push('地域(各地的当前局势):');
-    lines.push('地域 | 概况 | 局势 | 当权者 | 对外关系');
-    for (const [name, r] of regions) {
-      lines.push([name, r.概况 || '—', r.局势 || '—', r.当权者 || '—', r.对外关系 || '—'].join(' | '));
-    }
+    lines.push(注入表头(地域层));
+    for (const [name, r] of regions) lines.push(注入行(地域层, name, r));
   }
 
   // 节令(临近的公共节点, 公开知识; 受层开关控制)
-  const occasions = (data.节令 ?? []).filter(o => o && o.名称);
+  const 节令层 = 取层('节令');
+  const occasions = (data.节令 ?? []).filter(o => o && 该注入(节令层, o));
   if (settings.运转.节令历法 && occasions.length > 0) {
     lines.push('节令(临近的公共节点, 公开知识, 可自然融入场景):');
-    lines.push('节令 | 时间 | 周期 | 概况');
-    for (const o of occasions) {
-      lines.push([o.名称, o.时间 || '—', o.周期 || '—', o.概况 || '—'].join(' | '));
-    }
+    lines.push(注入表头(节令层));
+    for (const o of occasions) lines.push(注入行(节令层, o.名称, o));
   }
 
   // 指标(慢变世界状态; 受层开关控制)
-  const metrics = Object.entries(data.指标 ?? {}).filter(([, m]) => m && (m.值 || m.说明));
+  const 指标层 = 取层('指标');
+  const metrics = Object.entries(data.指标 ?? {}).filter(([, m]) => m && 该注入(指标层, m));
   if (settings.运转.世界指标 && metrics.length > 0) {
     lines.push('世界指标(慢变世界状态, 可作氛围与角色判断的背景, 不必直接报数值):');
-    lines.push('指标 | 值 | 趋势 | 说明');
-    for (const [name, m] of metrics) {
-      lines.push([name, m.值 || '—', m.趋势 || '—', m.说明 || '—'].join(' | '));
-    }
+    lines.push(注入表头(指标层));
+    for (const [name, m] of metrics) lines.push(注入行(指标层, name, m));
   }
 
   // 势力动向(全部注入——注入是主AI唯一的世界记忆, 不设条数上限)
-  const factionEntries = Object.entries(data.势力 ?? {}).filter(([, f]) => f && (f.动向 || f.目标));
+  const 势力层 = 取层('势力');
+  const factionEntries = Object.entries(data.势力 ?? {}).filter(([, f]) => f && 该注入(势力层, f));
   if (factionEntries.length > 0) {
     lines.push('势力暗流(幕后组织的当前盘算与动向, 大多与主角无关):');
-    lines.push('势力 | 头面人物 | 势力范围 | 目标 | 动向 | 对外关系 | 前情');
-    for (const [name, f] of factionEntries) {
-      lines.push([name, f.头面人物 || '—', f.势力范围 || '—', f.目标 || '—', f.动向 || '—', f.对外关系 || '—', f.前情 || '—'].join(' | '));
-    }
+    lines.push(注入表头(势力层));
+    for (const [name, f] of factionEntries) lines.push(注入行(势力层, name, f));
   }
 
   // 事件分公开/隐秘(最新在前, 不设条数上限)

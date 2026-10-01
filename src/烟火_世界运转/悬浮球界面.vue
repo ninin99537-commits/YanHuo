@@ -25,12 +25,12 @@ import { chatCompletion, fetchModelList } from './api';
 import { syncWorldbookEntry } from './inject';
 import { buildInjectionPrompt } from './prompts';
 import type { WorldData, WorldEvent, WorldFaction } from './schema';
-import { METRIC_TREND, SEED_MATURITY } from './schema';
 import { getSettings, useSettingsStore } from './settings';
 import { useConsoleStore, useDebugStore, useStateStore, useUpdatingStore } from './state';
 import { toastError, toastInfo, toastSuccess, toastWarning } from './toast';
 import { updateWorld } from './update';
 import { 有世界数据 } from './世界数据';
+import { 事件枚举, 取层, 表单定义 } from './世界字段表';
 import type { 世界条目层 } from './世界数据变更';
 import { 保存事件, 保存势力, 保存世界概述, 保存世界条目, 建世界数据环境, 清空世界, 移除事件, 移除势力, 移除世界条目 } from './世界数据变更';
 import { 取根变量 } from './主题';
@@ -106,43 +106,16 @@ const occasionList = computed(() => world.value.节令 ?? []);
 const metricEntries = computed(() => Object.entries(world.value.指标 ?? {}));
 
 // ---- 世界页手动编辑: 五层共用一套「名称+字段」增删改 ----
-// 改数据一律走 世界数据变更.ts 那道门(它负责上限/同名/id 签发/落快照/同步世界书), 这里只管展示与草稿
+// 改数据一律走 世界数据变更.ts 那道门(它负责上限/同名/id 签发/落快照/同步世界书), 这里只管展示与草稿。
+// 字段清单(名字/标签/枚举/多行)只在 世界字段表.ts 一处(候选 4): 这里按层取, 不再手抄字段名——
+// 漏一处的旧毛病就是"界面能编辑但注入里没有", 或读快照时被悄悄丢掉。
 type WorldLayer = 世界条目层;
 const layerFields: Record<WorldLayer, { key: string; label: string; enum?: readonly string[]; multiline?: boolean }[]> = {
-  地域: [
-    { key: '名称', label: '名称' },
-    { key: '概况', label: '概况', multiline: true },
-    { key: '局势', label: '局势', multiline: true },
-    { key: '当权者', label: '当权者' },
-    { key: '对外关系', label: '对外关系', multiline: true },
-    { key: '前情', label: '前情', multiline: true },
-  ],
-  大势: [
-    { key: '名称', label: '名称' },
-    { key: '概况', label: '概况', multiline: true },
-    { key: '进展', label: '进展', multiline: true },
-    { key: '走向', label: '走向', multiline: true },
-    { key: '前情', label: '前情', multiline: true },
-  ],
-  伏笔: [
-    { key: '标题', label: '标题' },
-    { key: '埋设', label: '埋设', multiline: true },
-    { key: '指向', label: '指向', multiline: true },
-    { key: '成熟度', label: '成熟度', enum: SEED_MATURITY },
-    { key: '前情', label: '前情', multiline: true },
-  ],
-  节令: [
-    { key: '名称', label: '名称' },
-    { key: '周期', label: '周期' },
-    { key: '时间', label: '时间(下次发生)' },
-    { key: '概况', label: '概况', multiline: true },
-  ],
-  指标: [
-    { key: '名称', label: '名称' },
-    { key: '值', label: '值' },
-    { key: '趋势', label: '趋势', enum: METRIC_TREND },
-    { key: '说明', label: '说明', multiline: true },
-  ],
+  地域: 表单定义(取层('地域')),
+  大势: 表单定义(取层('大势')),
+  伏笔: 表单定义(取层('伏笔')),
+  节令: 表单定义(取层('节令')),
+  指标: 表单定义(取层('指标')),
 };
 const worldEditing = ref(false);
 const worldDraft = ref<{ layer: WorldLayer; key: string; fields: Record<string, string> }>({ layer: '地域', key: '', fields: {} });
@@ -186,6 +159,13 @@ function removeWorldItem(layer: WorldLayer, key: string) {
 
 const stageFilter = ref<'全部' | '进行中' | '已结束'>('全部');
 const scaleFilter = ref<'全部' | '要事' | '大事'>('全部');
+/** 事件表单的下拉与筛选的枚举只有 世界字段表.ts 一处来源(以前模板里手抄了六组字面量) */
+const 规模选项 = 事件枚举.规模;
+const 传播选项 = 事件枚举.传播;
+const 阶段选项 = 事件枚举.阶段;
+const 隐秘选项 = 事件枚举.隐秘;
+const 阶段筛选项: readonly string[] = ['全部', '进行中', '已结束'];
+const 规模筛选项: readonly string[] = ['全部', ...事件枚举.规模];
 const chronicleEvents = computed(() => {
   const events = [...world.value.事件].reverse();
   return events.filter(event => {
@@ -724,7 +704,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
             <div class="yh-filter-row">
               <div class="yh-chip-group">
                 <button
-                  v-for="option in ['全部', '进行中', '已结束'] as const"
+                  v-for="option in 阶段筛选项"
                   :key="option"
                   class="yh-chip"
                   :class="{ 'is-active': stageFilter === option }"
@@ -735,7 +715,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
               </div>
               <div class="yh-chip-group">
                 <button
-                  v-for="option in ['全部', '要事', '大事'] as const"
+                  v-for="option in 规模筛选项"
                   :key="option"
                   class="yh-chip"
                   :class="{ 'is-active': scaleFilter === option }"
@@ -773,13 +753,13 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                       <input v-model="eventDraft.前情" class="yh-input" placeholder="前情（来龙去脉总结）" />
                       <div class="yh-edit-row">
                         <select v-model="eventDraft.规模" class="yh-input yh-select">
-                          <option v-for="s in ['要事', '大事']" :key="s" :value="s">{{ s }}</option>
+                          <option v-for="s in 规模选项" :key="s" :value="s">{{ s }}</option>
                         </select>
                         <select v-model="eventDraft.传播" class="yh-input yh-select">
-                          <option v-for="s in ['本埠', '区域', '天下']" :key="s" :value="s">{{ s }}</option>
+                          <option v-for="s in 传播选项" :key="s" :value="s">{{ s }}</option>
                         </select>
                         <select v-model="eventDraft.阶段" class="yh-input yh-select">
-                          <option v-for="s in ['酝酿', '进行', '尾声', '已结束']" :key="s" :value="s">{{ s }}</option>
+                          <option v-for="s in 阶段选项" :key="s" :value="s">{{ s }}</option>
                         </select>
                       </div>
                       <div class="yh-edit-row">
@@ -795,7 +775,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                       </div>
                       <div class="yh-edit-row">
                         <select v-model="eventDraft.隐秘" class="yh-input yh-select">
-                          <option v-for="s in ['公开', '隐秘']" :key="s" :value="s">{{ s }}</option>
+                          <option v-for="s in 隐秘选项" :key="s" :value="s">{{ s }}</option>
                         </select>
                       </div>
                       <div class="yh-edit-actions">

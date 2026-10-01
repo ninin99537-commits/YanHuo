@@ -3,9 +3,10 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { useHost } from './host';
 import { getSettings } from './settings';
-import type { EventEvolution, WorldData, WorldEvent, WorldInfo } from './schema';
-import { EVENT_SCALE, EVENT_SECRECY, EVENT_SPREAD, EVENT_STAGE, METRIC_TREND, SEED_MATURITY } from './schema';
+import type { EventEvolution, WorldData, WorldEvent, WorldInfo, WorldFaction, WorldMetric, WorldOccasion, WorldRegion, WorldSeed, WorldTrend } from './schema';
+import { EVENT_SCALE, EVENT_SECRECY, EVENT_SPREAD, EVENT_STAGE } from './schema';
 import { toastError } from './toast';
+import { 取层, 规范化条目 } from './世界字段表';
 
 export const STORAGE_KEY = '烟火';
 export const DATA_VERSION = 1;
@@ -20,13 +21,9 @@ export const SNAPSHOT_LIMIT = 10;
 export const EVENT_LIMIT = 30;
 /** 已结束事件的保留条数(超出后丢最旧的): 注入只发未结束事件, 但面板与快照会被旧事件越拖越长 */
 export const ENDED_EVENT_LIMIT = 6;
-export const FACTION_LIMIT = 8;
-/** 五层世界素材源的容量上限 */
-export const REGION_LIMIT = 8;
-export const TREND_LIMIT = 5;
-export const SEED_LIMIT = 5;
-export const OCCASION_LIMIT = 6;
-export const METRIC_LIMIT = 6;
+/** 五层常驻档案(地域/大势/伏笔/节令/指标)与势力的容量上限现在只在 世界字段表.ts 里写一处(候选 4),
+ *  这里原样转出去给原有调用方(世界数据.ts / 世界数据变更.ts / prompts.ts / 用例都从 state 取) */
+export { FACTION_LIMIT, METRIC_LIMIT, OCCASION_LIMIT, REGION_LIMIT, SEED_LIMIT, TREND_LIMIT } from './世界字段表';
 /** 单个事件演变流水的保留条数(最新在后, 超出裁掉最旧的) */
 export const EVENT_HISTORY_LIMIT = 8;
 
@@ -140,76 +137,36 @@ function sanitizeSnapshot(snapshot: Record<string, any>): WorldData {
           : [],
       }));
   }
+  // 势力与五层档案: 字段清单 / 缺省 / 旧字段名迁移 一律照 世界字段表.ts(候选 4 起不在这里手抄字段名)
   if (snapshot.势力 && typeof snapshot.势力 === 'object' && !Array.isArray(snapshot.势力)) {
     for (const [name, faction] of Object.entries(snapshot.势力) as [string, Record<string, unknown>][]) {
-      if (faction && typeof faction === 'object') {
-        // 旧快照迁移: v1.7 前的势力缺 前情/领地/对外关系, 缺省补空串; 「对主角态度」已废弃, 丢弃
-        data.势力[name] = {
-          目标: String(faction.目标 ?? ''),
-          动向: String(faction.动向 ?? ''),
-          前情: String(faction.前情 ?? ''),
-          势力范围: String(faction.势力范围 ?? faction.领地 ?? ''),
-          对外关系: String(faction.对外关系 ?? ''),
-          头面人物: String(faction.头面人物 ?? ''),
-        };
-      }
+      // 旧快照迁移: v1.7 前的势力缺 前情/领地/对外关系, 缺省补空串(领地 → 势力范围); 「对主角态度」已废弃, 丢弃
+      if (faction && typeof faction === 'object') data.势力[name] = 规范化条目<WorldFaction>(取层('势力'), faction);
     }
   }
   if (snapshot.地域 && typeof snapshot.地域 === 'object' && !Array.isArray(snapshot.地域)) {
     for (const [name, region] of Object.entries(snapshot.地域) as [string, Record<string, unknown>][]) {
-      if (region && typeof region === 'object') {
-        data.地域[name] = {
-          概况: String(region.概况 ?? ''),
-          局势: String(region.局势 ?? ''),
-          当权者: String(region.当权者 ?? ''),
-          对外关系: String(region.对外关系 ?? ''),
-          前情: String(region.前情 ?? ''),
-        };
-      }
+      if (region && typeof region === 'object') data.地域[name] = 规范化条目<WorldRegion>(取层('地域'), region);
     }
   }
   if (snapshot.大势 && typeof snapshot.大势 === 'object' && !Array.isArray(snapshot.大势)) {
     for (const [name, trend] of Object.entries(snapshot.大势) as [string, Record<string, unknown>][]) {
-      if (trend && typeof trend === 'object') {
-        data.大势[name] = {
-          概况: String(trend.概况 ?? ''),
-          进展: String(trend.进展 ?? ''),
-          走向: String(trend.走向 ?? ''),
-          前情: String(trend.前情 ?? ''),
-        };
-      }
+      if (trend && typeof trend === 'object') data.大势[name] = 规范化条目<WorldTrend>(取层('大势'), trend);
     }
   }
   if (Array.isArray(snapshot.伏笔)) {
     data.伏笔 = snapshot.伏笔
       .filter((item: unknown) => !!item && typeof item === 'object')
-      .map((seed: Record<string, unknown>) => ({
-        标题: String(seed.标题 ?? ''),
-        埋设: String(seed.埋设 ?? ''),
-        指向: String(seed.指向 ?? ''),
-        成熟度: SEED_MATURITY.includes(seed.成熟度 as any) ? (seed.成熟度 as any) : '酝酿',
-        前情: String(seed.前情 ?? ''),
-      }));
+      .map((seed: Record<string, unknown>) => 规范化条目<WorldSeed>(取层('伏笔'), seed));
   }
   if (Array.isArray(snapshot.节令)) {
     data.节令 = snapshot.节令
       .filter((item: unknown) => !!item && typeof item === 'object')
-      .map((occasion: Record<string, unknown>) => ({
-        名称: String(occasion.名称 ?? ''),
-        周期: String(occasion.周期 ?? ''),
-        时间: String(occasion.时间 ?? ''),
-        概况: String(occasion.概况 ?? ''),
-      }));
+      .map((occasion: Record<string, unknown>) => 规范化条目<WorldOccasion>(取层('节令'), occasion));
   }
   if (snapshot.指标 && typeof snapshot.指标 === 'object' && !Array.isArray(snapshot.指标)) {
     for (const [name, metric] of Object.entries(snapshot.指标) as [string, Record<string, unknown>][]) {
-      if (metric && typeof metric === 'object') {
-        data.指标[name] = {
-          值: String(metric.值 ?? ''),
-          趋势: METRIC_TREND.includes(metric.趋势 as any) ? (metric.趋势 as any) : '平稳',
-          说明: String(metric.说明 ?? ''),
-        };
-      }
+      if (metric && typeof metric === 'object') data.指标[name] = 规范化条目<WorldMetric>(取层('指标'), metric);
     }
   }
   data.小结 = String(snapshot.小结 ?? '');

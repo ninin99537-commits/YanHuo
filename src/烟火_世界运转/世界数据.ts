@@ -1,16 +1,11 @@
 import type { WorldData, WorldEvent, WorldFaction, WorldMetric, WorldOccasion, WorldSeed } from './schema';
-import { EVENT_SCALE, EVENT_SECRECY, EVENT_SPREAD, EVENT_STAGE, METRIC_TREND, SEED_MATURITY } from './schema';
+import { EVENT_SCALE, EVENT_SECRECY, EVENT_SPREAD, EVENT_STAGE, SEED_MATURITY } from './schema';
 import {
   ENDED_EVENT_LIMIT,
   EVENT_HISTORY_LIMIT,
   EVENT_LIMIT,
-  FACTION_LIMIT,
-  METRIC_LIMIT,
-  OCCASION_LIMIT,
-  REGION_LIMIT,
-  SEED_LIMIT,
-  TREND_LIMIT,
 } from './state';
+import { 内容字段键, 取层, 占位词, 沿用条目, 规范化条目 } from './世界字段表';
 
 /**
  * 「世界数据规矩」: 旧世界 + AI 载荷 → 新世界 的全部领域规则。
@@ -57,8 +52,8 @@ export function pickEnum<T extends string>(value: unknown, allowed: readonly T[]
   return (allowed as readonly string[]).includes(text) ? (text as T) : fallback;
 }
 
-/** "无变化"类占位词(AI 对未变化事件可能填这些, 不应追加进演变/覆盖前情) */
-const NO_CHANGE_RE = /^(无|没有|无变化|没有变化|无明显变化|暂无变化|依旧|照旧|维持原状|不变|同上|同前|略)[。．.!！?？…\s]*$/;
+/** "无变化"类占位词(AI 对未变化事件可能填这些, 不应追加进演变/覆盖前情) —— 与势力清单共用同一份,
+ *  写在 世界字段表.ts 里(候选 4: 字段表与两处沿用规矩不再各留一份) */
 
 /** 单条事件的规范化结果: 变化=本次推进的实质变化(AI 报告), 合并进演变流水后即从最终数据中删除 */
 type NormalizedEvent = WorldEvent & { 变化: string };
@@ -173,9 +168,9 @@ export function validateAndNormalize(parsed: any, oldData: WorldData): WorldData
     }
     const { 变化: 本次变化, ...rest } = event;
     // 变化: AI 填"无变化/暂无"类占位词不算实质变化, 不追加进演变
-    const 变化Text = NO_CHANGE_RE.test(本次变化) ? '' : 本次变化;
+    const 变化Text = 占位词(本次变化) ? '' : 本次变化;
     // 前情: AI 填占位词或漏带时沿用旧前情, 防止好总结被"无/同上"覆盖
-    const 前情Text = rest.前情 && !NO_CHANGE_RE.test(rest.前情) ? rest.前情 : (old?.前情 ?? '');
+    const 前情Text = rest.前情 && !占位词(rest.前情) ? rest.前情 : (old?.前情 ?? '');
     const 演变 = [...(old?.演变 ?? [])];
     const lastStep = 演变.length > 0 ? 演变[演变.length - 1] : undefined;
     if (变化Text && 变化Text !== lastStep?.变化) {
@@ -212,17 +207,15 @@ export function validateAndNormalize(parsed: any, oldData: WorldData): WorldData
   const factions: Record<string, WorldFaction> = {};
   const rawFactions = parsed['势力'] && typeof parsed['势力'] === 'object' ? parsed['势力'] : {};
   const oldFactions = oldData.势力 ?? {};
+  const 势力层 = 取层('势力');
   // 明显不是势力的名字(人物组合/小商贩)直接过滤: 提示词已禁止, 这里兜底
   const NOT_FACTION_RE = /(姐妹|姐妹俩|兄弟俩|兄妹|姐弟|夫妻|母女|父子|一家人|一家[三四五口]|煎饼|小摊|早点摊|小吃|奶茶店|小卖部|便利店|水果店|大排档)/;
   // 覆盖式防丢: AI 只看得到本次喂给它的旧势力内容, 但字段是覆盖写——AI 漏带某字段时
-  // 沿用旧值而非清空, 防止"势力范围/前情"这类慢变字段被一次疏忽清掉。
+  // 沿用旧值而非清空, 防止"势力范围/前情"这类慢变字段被一次疏忽清掉; 字段清单与别名(势力范围←领地/
+  // 根据地/据点, 头面人物←首领/掌门/代言人)全在 世界字段表.ts, 前情写占位词时也沿用旧值。
   // 内容字段不截断——字数由提示词约束, 代码截断会把内容砍成半句(比超长更糟)
-  const inherit = (name: string, field: keyof WorldFaction, value: unknown): string => {
-    const v = String(value ?? '').trim();
-    return v || String(oldFactions[name]?.[field] ?? '').trim();
-  };
   for (const [name, raw] of Object.entries(rawFactions)) {
-    if (Object.keys(factions).length >= FACTION_LIMIT) break;
+    if (Object.keys(factions).length >= 势力层.容量) break;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
     const factionName = String(name).trim().slice(0, 30);
     if (!factionName) continue;
@@ -230,42 +223,37 @@ export function validateAndNormalize(parsed: any, oldData: WorldData): WorldData
       console.warn(`[烟火] 「${factionName}」不是势力(人物组合或小商贩), 已跳过`);
       continue;
     }
-    factions[factionName] = {
-      目标: inherit(factionName, '目标', (raw as any).目标),
-      动向: inherit(factionName, '动向', (raw as any).动向),
-      // 前情(滚动总结): AI 写占位词时也沿用旧值, 与事件前情同规则
-      前情: NO_CHANGE_RE.test(String((raw as any).前情 ?? ''))
-        ? String(oldFactions[factionName]?.前情 ?? '').trim()
-        : inherit(factionName, '前情', (raw as any).前情),
-      势力范围: inherit(factionName, '势力范围', (raw as any).势力范围 ?? (raw as any).领地 ?? (raw as any).根据地 ?? (raw as any).据点),
-      对外关系: inherit(factionName, '对外关系', (raw as any).对外关系 ?? (raw as any).关系),
-      头面人物: inherit(factionName, '头面人物', (raw as any).头面人物 ?? (raw as any).首领 ?? (raw as any).掌门 ?? (raw as any).代言人),
-    };
+    factions[factionName] = 沿用条目<WorldFaction>(
+      势力层,
+      raw as Record<string, unknown>,
+      oldFactions[factionName] as unknown as Record<string, unknown> | undefined,
+    );
   }
   // 势力换血守卫(与事件同款): AI 未带回的既有势力自动捞回——势力被AI大量丢掉通常是清单
   // 换血的连带伤害, 真正不想要的势力走面板手动移除。超限时 AI 没带的新势力不会捞(下轮正常丢)。
   for (const [name, faction] of Object.entries(oldFactions)) {
     if (factions[name]) continue;
-    if (Object.keys(factions).length >= FACTION_LIMIT) break;
+    if (Object.keys(factions).length >= 势力层.容量) break;
     if (Object.keys(oldFactions).length > 0 && Object.keys(factions).length === 0) {
       console.warn('[烟火] 势力清单被整体清空, 已自动捞回既有势力——真正要删的势力请在面板手动移除');
     }
     factions[name] = faction;
   }
-  // 五层常驻档案: 地域/大势/指标用通用「名称→字符串字段」规范化; 伏笔/节令为数组, 单独处理
-  const 指标Raw = normalizeLayer(parsed['指标'], oldData.指标 ?? {}, METRIC_LIMIT, ['值', '趋势', '说明']);
+  // 五层常驻档案: 地域/大势/指标用通用「名称→字符串字段」规范化(字段清单与上限都从字段表取);
+  // 伏笔/节令为数组, 各有自己的成熟度/过期与沿用规矩, 单独处理
+  const 地域层 = 取层('地域');
+  const 大势层 = 取层('大势');
+  const 指标层 = 取层('指标');
+  const 指标Raw = normalizeLayer(parsed['指标'], oldData.指标 ?? {}, 指标层.容量, 内容字段键(指标层));
   const 指标: Record<string, WorldMetric> = {};
   for (const [name, entry] of Object.entries(指标Raw)) {
-    指标[name] = {
-      值: String(entry.值 ?? ''),
-      趋势: pickEnum(entry.趋势, METRIC_TREND, '平稳'),
-      说明: String(entry.说明 ?? ''),
-    };
+    指标[name] = 规范化条目<WorldMetric>(指标层, entry);
   }
+  const 伏笔层 = 取层('伏笔');
   const 伏笔: WorldSeed[] = [];
   if (Array.isArray(parsed['伏笔'])) {
     for (const raw of parsed['伏笔']) {
-      if (伏笔.length >= SEED_LIMIT) break;
+      if (伏笔.length >= 伏笔层.容量) break;
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
       const 标题 = String(raw.标题 ?? '').trim().slice(0, 40);
       if (!标题) continue;
@@ -280,7 +268,7 @@ export function validateAndNormalize(parsed: any, oldData: WorldData): WorldData
     }
   }
   for (const seed of oldData.伏笔 ?? []) {
-    if (伏笔.length >= SEED_LIMIT) break;
+    if (伏笔.length >= 伏笔层.容量) break;
     // 已爆发的伏笔会被兑现成事件并从清单删除, 不要捞回(否则和 AI 的删除打架)
     if (seed.成熟度 === '已爆发') continue;
     if (!伏笔.some(item => item.标题 === seed.标题)) 伏笔.push(seed);
@@ -293,6 +281,7 @@ export function validateAndNormalize(parsed: any, oldData: WorldData): WorldData
   };
   // 先全量收集(不在这里截断), 再按时间从近到远排序后截断:
   // 保证"还没到、就快到"的节令不会被这轮新增的节令挤掉
+  const 节令层 = 取层('节令');
   const 节令候选: WorldOccasion[] = [];
   if (Array.isArray(parsed['节令'])) {
     for (const raw of parsed['节令']) {
@@ -326,7 +315,7 @@ export function validateAndNormalize(parsed: any, oldData: WorldData): WorldData
       return a.index - b.index;
     })
     .map(item => item.occ)
-    .slice(0, OCCASION_LIMIT);
+    .slice(0, 节令层.容量);
   return {
     ...oldData,
     世界: {
@@ -336,8 +325,8 @@ export function validateAndNormalize(parsed: any, oldData: WorldData): WorldData
       // 旧字段「大势」兜底迁移为「总览」
       总览: String(world['总览'] ?? world['大势'] ?? '').trim() || oldData.世界.总览 || '',
     },
-    地域: normalizeLayer(parsed['地域'], oldData.地域 ?? {}, REGION_LIMIT, ['概况', '局势', '当权者', '对外关系', '前情']),
-    大势: normalizeLayer(parsed['大势'], oldData.大势 ?? {}, TREND_LIMIT, ['概况', '进展', '走向', '前情']),
+    地域: normalizeLayer(parsed['地域'], oldData.地域 ?? {}, 地域层.容量, 内容字段键(地域层)),
+    大势: normalizeLayer(parsed['大势'], oldData.大势 ?? {}, 大势层.容量, 内容字段键(大势层)),
     伏笔,
     节令,
     指标,

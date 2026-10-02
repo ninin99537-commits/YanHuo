@@ -1515,6 +1515,8 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
         <span>{{ settings.接口.模型 || '未配置接口' }}</span>
         <span>{{ world.世界.时间 || '世界时间未知' }}</span>
         <span>快照 {{ world.锚点楼层 >= 0 ? `#${world.锚点楼层}` : '无' }}</span>
+        <!-- 版本号: 与 README「更新日志」顶部那条的版本保持一致, 改版本时两处一起改 -->
+        <span>v2.3 · 烟火</span>
       </footer>
     </section>
   </div>

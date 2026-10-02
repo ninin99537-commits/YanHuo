@@ -170,34 +170,6 @@ function mergeHoldingItems(oldItems: string[], newItems: string[]): string[] {
 }
 
 /**
- * 「持有物移除」通道: 把模型显式声明"本轮不在身上了"的物品从合并结果里按**物品名**删掉。
- * 为什么它必须是一条并列通道: 上面的 mergeHoldingItems 是纯并集(旧物品一律保留, 防 AI 漏写导致
- * 物品凭空消失), 只从「持有物」里省略某件物品永远不会生效——删除只能由这个键显式声明。
- *  - 值可以是物品名数组, 也可以是 AI 常写的字符串(顿号/逗号/分号分隔), 都用 splitListItems 切;
- *  - 名字取括号前那一段(holdingItemName), 所以写短名就能删掉带括号说明的整条;
- *    整条文本、首尾空白、行首的 -/·/、 都容忍;
- *  - 名字对不上就是**无操作**: 不改数据、不报错、不打日志;
- *  - 一条都没删掉时原样返回(不重排、不重新拼接), 保证与"本轮没带这个键"时结果完全一致。
- */
-function removeHoldingItems(text: string, removals: unknown): string {
-    const removedNames = new Set<string>();
-    for (const raw of Array.isArray(removals) ? removals : [removals]) {
-        if (typeof raw !== 'string')
-            continue;
-        for (const piece of splitListItems(raw, HOLDING_SEPARATORS)) {
-            const name = holdingItemName(piece.replace(/^[-·、\s]+/, ''));
-            if (name)
-                removedNames.add(name);
-        }
-    }
-    if (removedNames.size === 0)
-        return text;
-    const items = splitListItems(text, HOLDING_SEPARATORS);
-    const kept = items.filter(item => !removedNames.has(holdingItemName(item)));
-    return kept.length === items.length ? text : kept.join('、');
-}
-
-/**
  * 近期关键事件的语义近似去重。
  *
  * AI 常把同一件事换一种说法再次返回，例如：
@@ -301,15 +273,6 @@ function mergeCard(oldCard, update, storyTimeText = '') {
             }
         }
     }
-    // 「持有物移除」= 模型显式声明本轮已不在身上的物品名(送出/丢弃/损毁/消耗/归还/被拿走)。
-    // 「持有物」本身是只增不减的并集(见 mergeHoldingItems), 所以删除只能走这条并列通道。
-    // 位置在 CARD_FIELDS 循环**之后**: 同一轮里既被并集加回(本轮「持有物」又写了它)又被移除时,
-    // 移除后应用 → 移除生效(正文说它已经不在身上了)。
-    // 这个键只用于处理: 不落库、不注入主 AI、不进界面, 处理完立刻删除(与上面 delete 清理同一模式)。
-    if (merged['持有物'] && update['持有物移除'] !== undefined) {
-        merged['持有物'] = removeHoldingItems(String(merged['持有物']), update['持有物移除']);
-    }
-    delete merged['持有物移除'];
     // 即使本轮 AI 没返回近期关键事件，也清理旧快照里已经存在的近义重复。
     if (merged['近期关键事件'])
         merged['近期关键事件'] = dedupeRecentEvents(merged['近期关键事件']);

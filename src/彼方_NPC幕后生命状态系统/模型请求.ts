@@ -199,13 +199,10 @@ function extractJsonSnippet(content) {
     const snippet = stripThinkingFields(text.slice(firstBrace, lastBrace + 1));
     return snippet.trim() || text.slice(firstBrace, lastBrace + 1);
 }
-/** 顶层保留键(非 NPC 名字): 元数据/思考字段/旧格式分组键, 不参与状态卡合并与校验。
- *  「持有物移除」正常写在每个 NPC 对象里(见 应用更新.ts 的 mergeCard), 这里把它一并列为保留键:
- *  模型若误把它放到顶层, 不会被当成一个叫"持有物移除"的 NPC。 */
+/** 顶层保留键(非 NPC 名字): 元数据/思考字段/旧格式分组键, 不参与状态卡合并与校验 */
 function isReservedTopLevelKey(name) {
     return name === '在场NPC' || name === '后台互动' || name === '移除NPC'
         || name === '剧情时间' || name === '受孕事件' || name === '人设参考'
-        || name === '持有物移除'
         || THINKING_FIELD_KEYS.includes(name);
 }
 /** 校验 AI 输出的 JSON 结构是否符合预期; 结构错误、"新增 NPC 字段不全"抛错重试, 已有 NPC 缺普通字段只警告(沿用旧值) */

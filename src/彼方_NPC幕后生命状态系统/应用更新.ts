@@ -78,10 +78,8 @@ function extractCurrentTimeHint(_worldbook, reply, context) {
     return extractFrom(context);
 }
 
-/** 列表型字段(持有物/近期关键事件)的条目分隔符。
- *  持有物: 提示词要求「、」, 兼容 AI 常用的 , ， ; ；。
- *  近期关键事件: 沿用旧行为(；;、换行)——逗号在事件正文里很常见, 不当条目分隔符。 */
-const HOLDING_SEPARATORS = '、,，;；';
+/** 列表型字段(近期关键事件)的条目分隔符: 沿用旧行为(；;、换行)
+ *  ——逗号在事件正文里很常见, 不当条目分隔符。 */
 const EVENT_SEPARATORS = '；;、\n';
 /** 括号字符(都算括号, 按深度计数): 括号内的分隔符是描述的一部分, 不能当条目分隔符 */
 const OPEN_BRACKETS = '([{（【';
@@ -126,48 +124,6 @@ function splitListItems(text: string, separators: string): string[] {
     }
     items.push(current);
     return items.map(item => item.trim()).filter(Boolean);
-}
-
-/** 持有物条目的名字 = 括号前那一段(去掉首尾空白与结尾标点); 同名即同一件物品。 */
-function holdingItemName(item: string): string {
-    const cut = item.search(/[(（[{【]/);
-    const head = cut === -1 ? item : item.slice(0, cut);
-    return head.trim().replace(/[、,，;；:：\s]+$/, '');
-}
-
-/** 持有物条目括号里的描述; 没有括号(或括号里为空)时返回空串。 */
-function holdingItemDetail(item: string): string {
-    const start = item.search(/[(（[{【]/);
-    if (start === -1)
-        return '';
-    return item.slice(start).replace(/^[(（[{【]+/, '').replace(/[)）\]}】]+$/, '').trim();
-}
-
-/**
- * 持有物合并(铁律"只增不减"不变):
- *  - 同名(括号前那一段)只保留一条: 较新的条目带了括号描述就用新的;
- *    较新的条目只有名字(没括号)而旧条目有描述时, 沿用旧条目的括号描述, 不倒退成光秃秃的名字。
- *    这样 AI 每轮把整份清单原样返回一遍是**幂等**的——合并两次 == 合并一次。
- *  - 丢掉"是另一条子串"的碎片(旧版按顿号硬切留下的残片, 如 "袖子挽到手肘)" 被
- *    "旧运动外套(2025-09-18 身上套着、袖子挽到手肘)" 包含), 存量脏数据在下一次更新时自行收敛。
- */
-function mergeHoldingItems(oldItems: string[], newItems: string[]): string[] {
-    const merged: string[] = [];
-    const slotByName = new Map<string, number>();
-    for (const item of [...oldItems, ...newItems]) {
-        const name = holdingItemName(item);
-        // 没有名字的条目(整条都是括号内容)不参与同名归并, 用整条做键, 免得互相吞掉
-        const key = name || item;
-        const slot = slotByName.get(key);
-        if (slot === undefined) {
-            slotByName.set(key, merged.length);
-            merged.push(item);
-        }
-        else if (holdingItemDetail(item)) {
-            merged[slot] = item;
-        }
-    }
-    return merged.filter((item, index) => !merged.some((other, otherIndex) => otherIndex !== index && other.includes(item)));
 }
 
 /**
@@ -234,7 +190,7 @@ function mergeCard(oldCard, update, storyTimeText = '') {
     // 人设参考是发给 AI 的只读参考(每张卡附在末尾的世界书条目), AI 不应把它当字段返回——
     // 若 AI 误把它写进 JSON, 直接丢弃不合并, 防止它进入快照无限累积。
     delete merged['人设参考'];
-    // 清理旧版字段(最近变化已从 CARD_FIELDS 移除)
+    // 清理旧版字段(见 卡字段.ts 的 LEGACY_CARD_FIELDS: 已从 CARD_FIELDS 退休的字段在这里自动从每张卡上删掉)
     for (const legacyField of LEGACY_CARD_FIELDS) {
         delete merged[legacyField];
     }
@@ -252,14 +208,14 @@ function mergeCard(oldCard, update, storyTimeText = '') {
             continue;
         }
         if (typeof value === 'string' && value.trim()) {
-            // 持有物/近期关键事件: 追加式合并, 不覆盖(见原则4.5一致性铁律)
+            // 「近期关键事件」追加式合并, 不覆盖(见原则4.5一致性铁律)
             if (APPEND_CARD_FIELDS.includes(key)) {
                 const oldText = String(merged[key] ?? '').trim();
                 const newText = value.trim();
                 if (!oldText) {
                     merged[key] = newText;
                 }
-                else if (key === '近期关键事件') {
+                else {
                     // FIFO 最多3条, 新条目追加到末尾, 去重(避免AI重复返回已入库条目)
                     // 分隔符兼容: 提示词未强制, AI 可能用 ；、;、顿号、换行 分隔多条
                     const oldItems = splitListItems(oldText, EVENT_SEPARATORS);
@@ -270,13 +226,6 @@ function mergeCard(oldCard, update, storyTimeText = '') {
                             combined.push(item);
                     }
                     merged[key] = dedupeRecentEvents(combined.join('；'));
-                }
-                else {
-                    // 持有物: 同名归并 + 清碎片, 旧物品保留(见 mergeHoldingItems)
-                    // 分隔符兼容: 提示词要求「、」, 但 AI 可能用 , 、, 逗号、顿号、分号
-                    const oldItems = splitListItems(oldText, HOLDING_SEPARATORS);
-                    const newItems = splitListItems(newText, HOLDING_SEPARATORS);
-                    merged[key] = mergeHoldingItems(oldItems, newItems).join('、');
                 }
             }
             else {

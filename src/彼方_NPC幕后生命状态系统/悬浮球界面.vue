@@ -347,7 +347,7 @@
               <div v-else-if="tab === 'consistency'" key="consistency" class="bf-page">
                 <div class="bf-page-title"><PhShieldCheck :size="18" weight="duotone" /> 事实档案</div>
                 <div class="bf-page-hint">
-                  每个 NPC 当下"记得"什么——具体物品/承诺/近期关键事件/身份锚点。这些跨楼层事实档案会发送给彼方更新 AI,
+                  每个 NPC 当下"记得"什么——承诺/近期关键事件/身份锚点。这些跨楼层事实档案会发送给彼方更新 AI,
                   并在开启注入后提供给主 AI; 代码会自动追加/去重/保留最近三条, 看到明显错误时可在 NPC 详情手动修正。
                 </div>
                 <div v-if="consistencyList.length === 0" class="bf-empty">
@@ -361,10 +361,6 @@
                       <span v-if="item.锚点" class="bf-consistency-anchor">{{ item.锚点 }}</span>
                     </div>
                     <div class="bf-consistency-grid">
-                      <div v-if="item.持有物" class="bf-consistency-row">
-                        <span class="bf-consistency-label"><PhPackage :size="12" weight="duotone" /> 持有物</span>
-                        <span class="bf-consistency-value">{{ item.持有物 }}</span>
-                      </div>
                       <div v-if="item.未完成事项.length > 0" class="bf-consistency-row">
                         <span class="bf-consistency-label"><PhHandshake :size="12" weight="duotone" /> 未完成承诺</span>
                         <!-- 「未完成事项」是事务台账数组, 不能直接插值(会渲染成一串 JSON); 一条一行, 已办弱化 -->
@@ -385,7 +381,7 @@
                         <span class="bf-consistency-label"><PhBookmarkSimple :size="12" weight="duotone" /> 近期关键事件</span>
                         <span class="bf-consistency-value">{{ item.近期关键事件 }}</span>
                       </div>
-                      <div v-if="!item.持有物 && item.未完成事项.length === 0 && !item.近期关键事件" class="bf-consistency-row bf-consistency-empty">
+                      <div v-if="item.未完成事项.length === 0 && !item.近期关键事件" class="bf-consistency-row bf-consistency-empty">
                         <span class="bf-consistency-value">该 NPC 暂无事实档案(可在 NPC 详情页手动添加)</span>
                       </div>
                     </div>
@@ -720,7 +716,7 @@
           <span>模型: {{ settings.接口.模型 || '—' }}</span>
           <span v-if="stats.最后更新">更新时间: {{ fmtTime(stats.最后更新) }}</span>
           <span class="bf-footer-spacer"></span>
-          <span>v4.1 · 彼方</span>
+          <span>v5.15 · 彼方</span>
         </footer>
       </div>
     </Transition>
@@ -770,7 +766,6 @@ import {
   PhHeartStraight,
   PhMapPin,
   PhMoon,
-  PhPackage,
   PhPaperPlaneRight,
   PhPencilSimple,
   PhPlug,
@@ -959,17 +954,16 @@ function removeNpc(name: string) {
   data.value = 结果.数据;
   if (selectedNpc.value === name) selectedNpc.value = null;
 }
-/** 事实档案: 每个 NPC 的跨楼层记忆账本(身份锚点/持有物/未完成承诺/近期关键事件)。
+/** 事实档案: 每个 NPC 的跨楼层记忆账本(身份锚点/未完成承诺/近期关键事件)。
  *  「未完成事项」是事务台账数组: 交给 显示台账 归一并排序(旧格式字符串也会迁移成一条进行中),
  *  模板按台账逐行渲染——直接插值数组会渲染成一串 JSON。 */
 const consistencyList = computed(() => {
-  const list: Array<{ name: string; 锚点?: string; 持有物?: string; 未完成事项: 幕后事务[]; 近期关键事件?: string }> = [];
+  const list: Array<{ name: string; 锚点?: string; 未完成事项: 幕后事务[]; 近期关键事件?: string }> = [];
   for (const [name, card] of Object.entries(data.value.NPC ?? {})) {
     const c = card as Record<string, any>;
     list.push({
       name,
       锚点: c['身份锚点'],
-      持有物: c['持有物'],
       未完成事项: 显示台账(c[台账字段]),
       近期关键事件: c['近期关键事件'],
     });

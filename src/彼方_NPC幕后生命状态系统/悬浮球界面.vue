@@ -270,6 +270,54 @@
                       </div>
                     </div>
 
+                    <!-- 事务台账: 「未完成事项」是数组(见 事务台账.ts), 不是字符串——单独成区块按台账渲染,
+                         不能塞进下面的通用字段网格(那会把数组插值成一串 JSON)。一条一行: 编号/时间/内容/状态/结果,
+                         进行中在前且醒目、已完成/已作废压暗; 改状态与结果立刻走 数据变更.ts 的 改事务状态 落进快照 -->
+                    <div v-if="台账条目.length > 0 || editingNpc" class="bf-ledger">
+                      <div class="bf-ledger-head">
+                        <span class="bf-ledger-title"><PhHandshake :size="13" weight="duotone" /> 未完成事项 · 事务台账</span>
+                        <span class="bf-ledger-hint">内容写下即冻结; 改状态/结果即时生效(不必点「编辑」)</span>
+                      </div>
+                      <div v-if="台账条目.length === 0" class="bf-ledger-blank">暂无</div>
+                      <div v-else class="bf-ledger-list">
+                        <div
+                          v-for="事务 in 台账条目"
+                          :key="事务.编号"
+                          class="bf-ledger-item"
+                          :class="'is-' + 状态类(事务.状态)"
+                        >
+                          <div class="bf-ledger-row">
+                            <span class="bf-ledger-no">{{ 事务.编号 }}</span>
+                            <span v-if="事务.时间" class="bf-ledger-time">{{ 事务.时间 }}</span>
+                            <span class="bf-ledger-state" :class="'is-' + 状态类(事务.状态)">{{ 事务.状态 }}</span>
+                            <span class="bf-ledger-content">{{ 事务.内容 }}</span>
+                          </div>
+                          <div v-if="事务.结果" class="bf-ledger-resulttext">结果: {{ 事务.结果 }}</div>
+                          <div class="bf-ledger-actions">
+                            <input
+                              v-model="结果草稿[事务.编号]"
+                              class="bf-input bf-ledger-result"
+                              :placeholder="事务.结果 ? '改写结果(提交即覆盖)' : '结果(可选)'"
+                              :disabled="updating"
+                            />
+                            <div class="bf-seg bf-ledger-seg">
+                              <button
+                                v-for="状态 in 台账状态表"
+                                :key="状态"
+                                class="bf-btn bf-btn-mini"
+                                :class="{ active: 事务.状态 === 状态 }"
+                                :disabled="updating"
+                                :title="`把 ${事务.编号} 标记为${状态}`"
+                                @click="改事务(事务, 状态)"
+                              >
+                                {{ 状态 }}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
                     <!-- 分组字段 -->
                     <div class="bf-detail-groups">
                       <div v-for="组 in detailFields" :key="组.key" class="bf-field-group">
@@ -317,15 +365,27 @@
                         <span class="bf-consistency-label"><PhPackage :size="12" weight="duotone" /> 持有物</span>
                         <span class="bf-consistency-value">{{ item.持有物 }}</span>
                       </div>
-                      <div v-if="item.未完成事项" class="bf-consistency-row">
+                      <div v-if="item.未完成事项.length > 0" class="bf-consistency-row">
                         <span class="bf-consistency-label"><PhHandshake :size="12" weight="duotone" /> 未完成承诺</span>
-                        <span class="bf-consistency-value">{{ item.未完成事项 }}</span>
+                        <!-- 「未完成事项」是事务台账数组, 不能直接插值(会渲染成一串 JSON); 一条一行, 已办弱化 -->
+                        <div class="bf-consistency-value bf-consistency-ledger">
+                          <div
+                            v-for="事务 in item.未完成事项"
+                            :key="事务.编号"
+                            class="bf-ledger-line"
+                            :class="'is-' + 状态类(事务.状态)"
+                          >
+                            <span class="bf-ledger-no">{{ 事务.编号 }}</span>
+                            <span class="bf-ledger-state" :class="'is-' + 状态类(事务.状态)">{{ 事务.状态 }}</span>
+                            <span class="bf-ledger-line-text">{{ 事务.内容 }}<template v-if="事务.结果"> → {{ 事务.结果 }}</template></span>
+                          </div>
+                        </div>
                       </div>
                       <div v-if="item.近期关键事件" class="bf-consistency-row">
                         <span class="bf-consistency-label"><PhBookmarkSimple :size="12" weight="duotone" /> 近期关键事件</span>
                         <span class="bf-consistency-value">{{ item.近期关键事件 }}</span>
                       </div>
-                      <div v-if="!item.持有物 && !item.未完成事项 && !item.近期关键事件" class="bf-consistency-row bf-consistency-empty">
+                      <div v-if="!item.持有物 && item.未完成事项.length === 0 && !item.近期关键事件" class="bf-consistency-row bf-consistency-empty">
                         <span class="bf-consistency-value">该 NPC 暂无事实档案(可在 NPC 详情页手动添加)</span>
                       </div>
                     </div>
@@ -734,9 +794,11 @@ import { useSettingsStore } from './settings';
 import { useStateStore } from './数据仓';
 import { useConsoleStore, useDebugStore, useMainPromptStore } from './日志仓';
 import { useUpdatingStore } from './任务中断';
-import { 加NPC, 移除NPC, 更新状态卡, 清空彼方数据, 建变更环境 } from './数据变更';
+import { 加NPC, 移除NPC, 更新状态卡, 改事务状态, 清空彼方数据, 建变更环境 } from './数据变更';
 import { 字段分组表, 字段说明表, 建档字段 } from './卡字段';
 import type { NpcStateCard } from './卡字段';
+import { 台账字段, 台账状态表, 显示台账, 状态类 } from './台账操作';
+import type { 事务状态, 幕后事务 } from './事务台账';
 import { updateNpcStates } from './update';
 import { syncNpcStatesWorldbook } from './worldbook-inject';
 import { setToastAnchor, setToastColors, toastError, toastInfo, toastSuccess, toastWarning } from './toast';
@@ -897,16 +959,18 @@ function removeNpc(name: string) {
   data.value = 结果.数据;
   if (selectedNpc.value === name) selectedNpc.value = null;
 }
-/** 事实档案: 每个 NPC 的跨楼层记忆账本(身份锚点/持有物/未完成承诺/近期关键事件) */
+/** 事实档案: 每个 NPC 的跨楼层记忆账本(身份锚点/持有物/未完成承诺/近期关键事件)。
+ *  「未完成事项」是事务台账数组: 交给 显示台账 归一并排序(旧格式字符串也会迁移成一条进行中),
+ *  模板按台账逐行渲染——直接插值数组会渲染成一串 JSON。 */
 const consistencyList = computed(() => {
-  const list: Array<{ name: string; 锚点?: string; 持有物?: string; 未完成事项?: string; 近期关键事件?: string }> = [];
+  const list: Array<{ name: string; 锚点?: string; 持有物?: string; 未完成事项: 幕后事务[]; 近期关键事件?: string }> = [];
   for (const [name, card] of Object.entries(data.value.NPC ?? {})) {
     const c = card as Record<string, any>;
     list.push({
       name,
       锚点: c['身份锚点'],
       持有物: c['持有物'],
-      未完成事项: c['未完成事项'],
+      未完成事项: 显示台账(c[台账字段]),
       近期关键事件: c['近期关键事件'],
     });
   }
@@ -951,15 +1015,51 @@ const editDraft = ref<Record<string, any>>({});
 
 function startEditNpc() {
   if (!selectedNpcCard.value) return;
-  editDraft.value = { ...selectedNpcCard.value };
+  // 「未完成事项」是事务台账数组, **不进编辑表单**: 表单其余字段都是字符串, 台账的改法是在详情页
+  // 用每条事务上的状态按钮(走 改事务状态 通道, 立即写快照)。不把它放进草稿有两个原因:
+  //   1 表单控件按字符串处理数组会把台账显示成 [object Object] 之类, 玩家改不了还看着乱;
+  //   2 草稿是打开编辑时的快照, 若台账在编辑期间被状态按钮改过, 保存时会把旧台账写回去(改动被吃掉)。
+  // 草稿里没有这个字段 → 合并草稿不会碰卡里的台账(见 数据变更.ts), 不存在"悄悄丢改动"。
+  const { [台账字段]: _台账, ...字符串字段 } = selectedNpcCard.value as Record<string, any>;
+  editDraft.value = 字符串字段;
   editingNpc.value = true;
+}
+
+/** 详情页的事务台账(已归一、进行中在前、已办在后)——渲染用, 不写回 */
+const 台账条目 = computed<幕后事务[]>(() => 显示台账((selectedNpcCard.value as Record<string, any> | null)?.[台账字段]));
+
+/** 每行结果输入框的草稿: 没动过的行不在这里(于是沿用该条已有的结果, 见 取行结果) */
+const 结果草稿 = ref<Record<string, string>>({});
+
+/** 这一行该提交的结果: 输入框动过就用玩家写的(清空即清掉结果), 没动过就沿用台账里的 */
+function 取行结果(事务: 幕后事务): string {
+  const 草稿 = 结果草稿.value[事务.编号];
+  return 草稿 === undefined ? String(事务.结果 ?? '') : String(草稿).trim();
+}
+
+/** 改一条事务的状态(顺带写/改结果): 走 数据变更.ts 的既有通道(写快照 + 重同步世界书)。
+ *  没改成时 改事务状态 会把原数据对象原样返回——这里据此提示而不是假装成功。 */
+function 改事务(事务: 幕后事务, 新状态: 事务状态) {
+  if (!selectedNpc.value || !selectedNpcCard.value) return;
+  const 名字 = selectedNpc.value;
+  const 结果 = 改事务状态(data.value, 名字, 事务.编号, 新状态, 取行结果(事务), 建变更环境());
+  if (结果.数据 === data.value) {
+    toastWarning(结果.说明);
+    return;
+  }
+  data.value = 结果.数据;
+  // 提交成功后把这行的输入草稿清掉: 输入框回到"空 + 占位符显示当前结果", 免得留着一条已入库的
+  // 文本让人以为还没提交(进行中不带结果, 草稿也必须跟着清)
+  delete 结果草稿.value[事务.编号];
+  toastSuccess(结果.说明);
 }
 
 function saveEditNpc() {
   if (!selectedNpc.value || !data.value.NPC?.[selectedNpc.value]) return;
   const 名字 = selectedNpc.value;
   // 草稿合并的规则(含"额外可编辑字段" 受孕日期/生理周期日期/怀孕知晓/孕程周数/哺乳期月数)在
-  // 数据变更.ts: 有值就写、空字符串就删该字段。扩展字段用于调整孕周时间线与该 NPC 种族的时间尺度。
+  // 数据变更.ts: 有值就写、空字符串就删该字段(台账字段不在草稿里, 合并时原样保留卡里的台账)。
+  // 扩展字段用于调整孕周时间线与该 NPC 种族的时间尺度。
   const 结果 = 更新状态卡(data.value, 名字, editDraft.value, 建变更环境());
   data.value = 结果.数据;
   editingNpc.value = false;
@@ -993,11 +1093,13 @@ const 分组展示 = [
   { key: '生理', 标题: '生理状态', 图标: PhHeartStraight },
 ];
 
+/** NPC 详情字段分组: 分组标题与图标是展示(留在这里), "哪个字段属于哪一组"来自 卡字段.ts 的字段表。
+ *  「未完成事项」拆出去单独渲染成台账区块(它上面那排状态按钮才是它的编辑方式), 不在这里当普通字段。 */
 const detailFields = computed(() =>
   分组展示
     .map(组 => ({
       ...组,
-      字段: (字段分组表[组.key] || []).filter(f => (selectedNpcCard.value as NpcStateCard)?.[f] || editingNpc.value),
+      字段: (字段分组表[组.key] || []).filter(f => f !== 台账字段 && ((selectedNpcCard.value as NpcStateCard)?.[f] || editingNpc.value)),
     }))
     .filter(组 => 组.字段.length > 0),
 );
@@ -2493,6 +2595,158 @@ function clearAll() {
   color: var(--bf-dim);
   opacity: 0.6;
   font-style: italic;
+}
+
+/* ---------- 事务台账(「未完成事项」) ---------- */
+.bf-ledger {
+  background: var(--bf-bg2);
+  border: 1px solid var(--bf-border);
+  border-radius: var(--bf-radius);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+.bf-ledger-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 10px;
+}
+.bf-ledger-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--bf-accent-text);
+}
+.bf-ledger-hint {
+  font-size: 11px;
+  color: var(--bf-dim);
+  opacity: 0.75;
+}
+.bf-ledger-blank {
+  font-size: 12.5px;
+  color: var(--bf-dim);
+  opacity: 0.6;
+  font-style: italic;
+}
+.bf-ledger-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* 一条事务一块: 进行中左侧亮一道强调色(醒目), 已完成/已作废整体压暗(弱化) */
+.bf-ledger-item {
+  background: var(--bf-card);
+  border: 1px solid var(--bf-border);
+  border-left: 3px solid var(--bf-border);
+  border-radius: var(--bf-radius-sm);
+  padding: 8px 10px;
+}
+.bf-ledger-item.is-ongoing {
+  border-left-color: var(--bf-accent);
+}
+.bf-ledger-item.is-done,
+.bf-ledger-item.is-void {
+  opacity: 0.62;
+}
+.bf-ledger-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.bf-ledger-no {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--bf-accent-text);
+}
+.bf-ledger-time {
+  flex: none;
+  font-size: 11px;
+  color: var(--bf-dim);
+}
+.bf-ledger-content {
+  color: var(--bf-text);
+  word-break: break-word;
+}
+.bf-ledger-resulttext {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--bf-text);
+  opacity: 0.8;
+  word-break: break-word;
+}
+/* 状态徽章: 三个状态一套形状, 只有颜色不同(进行中用强调色, 已完成用成功色, 已作废用危险色) */
+.bf-ledger-state {
+  flex: none;
+  display: inline-block;
+  font-size: 10.5px;
+  line-height: 1.6;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--bf-border-strong);
+  color: var(--bf-dim);
+  white-space: nowrap;
+}
+.bf-ledger-state.is-ongoing {
+  border-color: transparent;
+  background: var(--bf-accent-soft);
+  color: var(--bf-accent-text);
+}
+.bf-ledger-state.is-done {
+  border-color: transparent;
+  color: var(--bf-success);
+}
+.bf-ledger-state.is-void {
+  border-color: transparent;
+  color: var(--bf-danger);
+}
+.bf-ledger-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+}
+/* 选择器带上 .bf-ledger 前缀: 通用组件(.bf-input/.bf-seg)在这份样式里排在后面, 不加前缀会被它们盖掉 */
+.bf-ledger .bf-ledger-result {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  font-size: 11.5px;
+}
+.bf-ledger .bf-ledger-seg {
+  flex: none;
+}
+.bf-ledger .bf-ledger-seg .bf-btn {
+  padding: 4px 9px;
+  font-size: 11px;
+}
+/* 事实档案页里的只读台账行(与详情页共用 .bf-ledger-no / .bf-ledger-state) */
+.bf-consistency-ledger {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.bf-ledger-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.bf-ledger-line.is-done,
+.bf-ledger-line.is-void {
+  opacity: 0.62;
+}
+.bf-ledger-line-text {
+  word-break: break-word;
 }
 
 /* ---------- 日志 ---------- */

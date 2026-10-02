@@ -9,6 +9,7 @@ import { getActiveWorldbookText, getPersonaTextForNpc } from './worldbook';
 import { loadData, updateClearLayer } from './快照';
 import { toastWarning } from './toast';
 import { PHYSIO_CYCLE_MAX, PHYSIO_CYCLE_MIN, PHYSIO_FIELDS } from './生理规则';
+import { 读取台账 } from './事务台账';
 
 type 取料 = { 过滤: any; 追踪: any; 名字出现: any; 最近回复: any; 上下文: any; 时间提示: any; 时间跳跃: any };
 type 取料参数 = { host: any; settings: any; force: any; timing: any; debugStore: any; 依赖: 取料 };
@@ -106,6 +107,11 @@ export async function 收集本轮输入(参数: 取料参数) {
         delete card['累计受孕率'];
         delete card['受孕率记录'];
         delete card['生理结算'];
+        // 事务台账: 旧卡里可能还是旧格式字符串, 发给模型前先规范化成数组——模型只认台账形态
+        // (带编号才能只报"状态/结果变了"), 否则它看到一整句字符串, 只能把内容整句重抄一遍。
+        // 这里改的是发给模型的**副本**, 不写回旧卡; 真正的入库迁移在 mergeCard 里由 合并台账 完成。
+        if (card['未完成事项'] !== undefined)
+            card['未完成事项'] = 读取台账(card['未完成事项']);
         currentCards[name] = card;
     }
     // 人设注入: 对每个已追踪 NPC, 收集**该 NPC 名字能触发的绿灯(关键词)条目**作为"人设参考"附在卡旁。

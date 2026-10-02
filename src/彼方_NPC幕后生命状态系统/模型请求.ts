@@ -14,8 +14,11 @@ import { 请求并校验 as 共用请求并校验 } from '../共用/模型往返
 
 /** 模型可能把内部思考当成顶层字段输出的键名(非彼方数据): 解析兜底时剥离, 也作为保留键不参与 NPC 建档 */
 const THINKING_FIELD_KEYS = ['静默思考流程', '思考流程', '思考过程', '思维链', '推理过程'];
+/** 值形态不是字符串的卡片字段: 校验时不按"非空字符串"要求。
+ *  「未完成事项」是事务台账**数组**(空数组也合法, 见 事务台账.ts) */
+const NON_STRING_CARD_FIELDS = ['未完成事项'];
 /** 每张被返回的状态卡都必须包含的普通字符串字段(全部字段, 新建 NPC 建档时使用) */
-const REQUIRED_CARD_FIELDS = CARD_FIELDS.filter(field => !PHYSIO_FIELDS.includes(field));
+const REQUIRED_CARD_FIELDS = CARD_FIELDS.filter(field => !PHYSIO_FIELDS.includes(field) && !NON_STRING_CARD_FIELDS.includes(field));
 /** 增量更新下已有 NPC 每次必返的核心字段(其余字段未返回=沿用旧值) */
 const CORE_CARD_FIELDS = ['当前在做', '当前状态', '位置'];
 function parseModelResponse(content) {
@@ -232,6 +235,13 @@ function validateParsedFormat(parsed, existingCards = {}, skipCheckNames = null)
         // 其余字段未返回=沿用旧值, 属于合法行为, 不警告
         const requiredFields = isNew ? REQUIRED_CARD_FIELDS : CORE_CARD_FIELDS;
         const missingNormal = requiredFields.filter(field => typeof card?.[field] !== 'string' || !String(card?.[field] ?? '').trim());
+        // 「未完成事项」的合法值是**数组**(事务台账), 空数组也合法——不按"非空字符串"口径判缺字段,
+        // 否则合法的新卡会被误警告。旧格式字符串也放行(合并时由 读取台账 迁移成 T1)。
+        if (isNew) {
+            const 台账 = card?.['未完成事项'];
+            if (!Array.isArray(台账) && !(typeof 台账 === 'string' && 台账.trim()))
+                missingNormal.push('未完成事项');
+        }
         if (missingNormal.length > 0) {
             console.warn(`[彼方] NPC「${npcName}」缺失字段: ${missingNormal.join('、')}(保留旧值)`);
         }

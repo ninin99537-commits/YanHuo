@@ -8,6 +8,7 @@ import { APPEND_CARD_FIELDS, CARD_FIELDS, LEGACY_CARD_FIELDS } from './卡字段
 import { applyConceptionCheck, CYCLE_STAGE_INFLUENCE, correctPhysioByStoryTime, ensurePregnancyKnowledge, extractLactationMonths, extractPregnancyWeek, cycleStageName, lactationExpired, normalizeRaceScale, PHYSIO_CYCLE_MAX, PHYSIO_CYCLE_MIN, PHYSIO_FIELDS, PREGNANCY_KNOWN_CONFIRMED, PREGNANCY_KNOWN_SUSPECT, PREGNANCY_KNOWN_UNKNOWN, PREGNANCY_KNOWN_VALUES, RACE_SCALE_FIELDS } from './生理规则';
 import { fmtStoryTime, parseStoryTime, parseStoryTimeRange, withStoryDate } from './剧情时间';
 import { isReservedTopLevelKey } from './模型请求';
+import { 合并台账, 读取台账 } from './事务台账';
 
 /** 脱敏接口地址(隐藏地址中可能携带的 token/key 查询参数), 用于错误日志。
  *  这行注释原先落在 update.ts 的 updateNpcStates 头上(从导出脚本还原时串了行, 文档挂到了它不描述的函数上), 这里归位。 */
@@ -239,6 +240,17 @@ function mergeCard(oldCard, update, storyTimeText = '') {
     }
     for (const key of CARD_FIELDS) {
         const value = update[key];
+        // 「未完成事项」是**事务台账(数组)**(见 事务台账.ts), 不走下面的字符串分支——
+        // 字段循环原先只认非空字符串, 数组会被整段跳过(等于台账永远合并不进去)。
+        // 这里交出完整入场券: 旧值可能是旧格式字符串(由 读取台账 迁移成 T1), 本轮值可能是
+        // 数组/字符串/乱七八糟(由 合并台账 规范化); 两者的规则(编号钉死内容、去重、封顶)都在那边。
+        if (key === '未完成事项') {
+            // 本轮没返回且卡里本来就没有 → 不写空数组进去(不给每张卡新增一个恒空的字段)
+            if (value === undefined && merged[key] === undefined)
+                continue;
+            merged[key] = 合并台账(读取台账(merged[key]), value, storyTimeText);
+            continue;
+        }
         if (typeof value === 'string' && value.trim()) {
             // 持有物/近期关键事件: 追加式合并, 不覆盖(见原则4.5一致性铁律)
             if (APPEND_CARD_FIELDS.includes(key)) {

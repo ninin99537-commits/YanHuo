@@ -12,6 +12,7 @@
 import { klona } from 'klona';
 import { toastError } from './toast';
 import { useHost } from './host';
+import type { 幕后事务 } from './事务台账';
 
 const STORAGE_KEY = '彼方';
 const DATA_VERSION = 3;
@@ -176,7 +177,10 @@ function migrateLegacyData(raw) {
 export interface 彼方数据 {
     版本: number;
     名单: string[];
-    NPC: Record<string, any>;
+    /** 每张 NPC 状态卡: 字段名 → 值(多数是字符串)。
+     *  例外: **「未完成事项」是事务台账数组**(幕后事务[], 见 事务台账.ts), 不是字符串——
+     *  写下即冻结、只能改状态/结果; 旧快照里可能还是旧格式字符串, 由 读取台账 在合并时迁移。 */
+    NPC: Record<string, { 未完成事项?: 幕后事务[]; [其它字段: string]: any }>;
     卡字段计数: Record<string, any>;
     统计: { 更新次数: number; 最后更新: number };
     剧情时间: string;

@@ -221,7 +221,8 @@ async function updateNpcStates(force = false) {
         if (parsed && typeof parsed === 'object') {
             for (const [name, card] of Object.entries(parsed)) {
                 // 顶层非 NPC 键(剧情时间/受孕事件/思考流程)不计入"已更新"统计
-                if (name === '剧情时间' || name === '受孕事件' || THINKING_FIELD_KEYS.includes(name))
+                // (清单型顶层键也是对象, 不排除的话会混进"已更新NPC"名单; 见 isReservedTopLevelKey)
+                if (name === '剧情时间' || name === '受孕事件' || name === '持有物移除' || THINKING_FIELD_KEYS.includes(name))
                     continue;
                 if (name === '移除NPC') {
                     if (Array.isArray(card))

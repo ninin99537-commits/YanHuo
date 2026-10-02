@@ -77,6 +77,98 @@ function extractCurrentTimeHint(_worldbook, reply, context) {
     return extractFrom(context);
 }
 
+/** 列表型字段(持有物/近期关键事件)的条目分隔符。
+ *  持有物: 提示词要求「、」, 兼容 AI 常用的 , ， ; ；。
+ *  近期关键事件: 沿用旧行为(；;、换行)——逗号在事件正文里很常见, 不当条目分隔符。 */
+const HOLDING_SEPARATORS = '、,，;；';
+const EVENT_SEPARATORS = '；;、\n';
+/** 括号字符(都算括号, 按深度计数): 括号内的分隔符是描述的一部分, 不能当条目分隔符 */
+const OPEN_BRACKETS = '([{（【';
+const CLOSE_BRACKETS = ')]}）】';
+
+/**
+ * 把 AI 照抄提示词写进数据的「顿号/逗号/分号」三个**词**还原成对应符号。
+ * 提示词里写"用顿号分隔"时, 模型会把"顿号"两个字直接写进字段
+ * (真机数据: "发旧长条小枕头(睡觉贴身抱着用)顿号软底室内鞋(…)"), 不还原就整串切不开。
+ */
+function normalizeSeparatorWords(text: string): string {
+    return String(text ?? '')
+        .replace(/顿号/g, '、')
+        .replace(/逗号/g, ',')
+        .replace(/分号/g, '；');
+}
+
+/**
+ * 按分隔符切条目, 但**只在括号外切**。
+ * 括号里的顿号/逗号是描述的一部分(如 "旧运动外套(2025-09-18 身上套着、袖子挽到手肘)"),
+ * 当成分隔符会把它劈成 "…身上套着" 与 "袖子挽到手肘)" 两条碎片, 碎片再被逐轮追加, 字段就越滚越长。
+ * ()（）[]【】{} 都算括号(深度计数); 括号没闭合时宁可整条留着, 也不在"看起来像括号内"的位置切。
+ */
+function splitListItems(text: string, separators: string): string[] {
+    const items: string[] = [];
+    let depth = 0;
+    let current = '';
+    for (const char of normalizeSeparatorWords(text)) {
+        if (OPEN_BRACKETS.includes(char)) {
+            depth++;
+        }
+        else if (CLOSE_BRACKETS.includes(char)) {
+            if (depth > 0)
+                depth--;
+        }
+        else if (depth === 0 && separators.includes(char)) {
+            items.push(current);
+            current = '';
+            continue;
+        }
+        current += char;
+    }
+    items.push(current);
+    return items.map(item => item.trim()).filter(Boolean);
+}
+
+/** 持有物条目的名字 = 括号前那一段(去掉首尾空白与结尾标点); 同名即同一件物品。 */
+function holdingItemName(item: string): string {
+    const cut = item.search(/[(（[{【]/);
+    const head = cut === -1 ? item : item.slice(0, cut);
+    return head.trim().replace(/[、,，;；:：\s]+$/, '');
+}
+
+/** 持有物条目括号里的描述; 没有括号(或括号里为空)时返回空串。 */
+function holdingItemDetail(item: string): string {
+    const start = item.search(/[(（[{【]/);
+    if (start === -1)
+        return '';
+    return item.slice(start).replace(/^[(（[{【]+/, '').replace(/[)）\]}】]+$/, '').trim();
+}
+
+/**
+ * 持有物合并(铁律"只增不减"不变):
+ *  - 同名(括号前那一段)只保留一条: 较新的条目带了括号描述就用新的;
+ *    较新的条目只有名字(没括号)而旧条目有描述时, 沿用旧条目的括号描述, 不倒退成光秃秃的名字。
+ *    这样 AI 每轮把整份清单原样返回一遍是**幂等**的——合并两次 == 合并一次。
+ *  - 丢掉"是另一条子串"的碎片(旧版按顿号硬切留下的残片, 如 "袖子挽到手肘)" 被
+ *    "旧运动外套(2025-09-18 身上套着、袖子挽到手肘)" 包含), 存量脏数据在下一次更新时自行收敛。
+ */
+function mergeHoldingItems(oldItems: string[], newItems: string[]): string[] {
+    const merged: string[] = [];
+    const slotByName = new Map<string, number>();
+    for (const item of [...oldItems, ...newItems]) {
+        const name = holdingItemName(item);
+        // 没有名字的条目(整条都是括号内容)不参与同名归并, 用整条做键, 免得互相吞掉
+        const key = name || item;
+        const slot = slotByName.get(key);
+        if (slot === undefined) {
+            slotByName.set(key, merged.length);
+            merged.push(item);
+        }
+        else if (holdingItemDetail(item)) {
+            merged[slot] = item;
+        }
+    }
+    return merged.filter((item, index) => !merged.some((other, otherIndex) => otherIndex !== index && other.includes(item)));
+}
+
 /**
  * 近期关键事件的语义近似去重。
  *
@@ -88,7 +180,7 @@ function extractCurrentTimeHint(_worldbook, reply, context) {
  * 判断为同一事件，并保留信息更完整（正文更长）的一条。不同日期永不合并。
  */
 function dedupeRecentEvents(text) {
-    const items = String(text ?? '').split(/[；;、\n]+/).map(item => item.trim()).filter(Boolean);
+    const items = splitListItems(String(text ?? ''), EVENT_SEPARATORS);
     const parse = (item) => {
         const match = item.match(/^(\d{4}-\d{1,2}-\d{1,2})\s*(.*)$/);
         return {
@@ -158,9 +250,8 @@ function mergeCard(oldCard, update, storyTimeText = '') {
                 else if (key === '近期关键事件') {
                     // FIFO 最多3条, 新条目追加到末尾, 去重(避免AI重复返回已入库条目)
                     // 分隔符兼容: 提示词未强制, AI 可能用 ；、;、顿号、换行 分隔多条
-                    const splitItems = (text) => text.split(/[；;、\n]+/).map(s => s.trim()).filter(Boolean);
-                    const oldItems = splitItems(oldText);
-                    const newItems = splitItems(newText);
+                    const oldItems = splitListItems(oldText, EVENT_SEPARATORS);
+                    const newItems = splitListItems(newText, EVENT_SEPARATORS);
                     const combined = [...oldItems];
                     for (const item of newItems) {
                         if (!combined.includes(item))
@@ -169,17 +260,11 @@ function mergeCard(oldCard, update, storyTimeText = '') {
                     merged[key] = dedupeRecentEvents(combined.join('；'));
                 }
                 else {
-                    // 持有物: 去重合并, 旧物品保留
-                    // 分隔符兼容: 提示词要求顿号, 但 AI 可能用 , 、, 逗号、顿号、分号
-                    const splitItems = (text) => text.split(/[、,，;；]+/).map(s => s.trim()).filter(Boolean);
-                    const oldItems = splitItems(oldText);
-                    const newItems = splitItems(newText);
-                    const combined = [...oldItems];
-                    for (const item of newItems) {
-                        if (!combined.includes(item))
-                            combined.push(item);
-                    }
-                    merged[key] = combined.join('、');
+                    // 持有物: 同名归并 + 清碎片, 旧物品保留(见 mergeHoldingItems)
+                    // 分隔符兼容: 提示词要求「、」, 但 AI 可能用 , 、, 逗号、顿号、分号
+                    const oldItems = splitListItems(oldText, HOLDING_SEPARATORS);
+                    const newItems = splitListItems(newText, HOLDING_SEPARATORS);
+                    merged[key] = mergeHoldingItems(oldItems, newItems).join('、');
                 }
             }
             else {

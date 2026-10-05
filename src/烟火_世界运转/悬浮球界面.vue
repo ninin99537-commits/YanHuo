@@ -5,7 +5,6 @@ import {
   PhCopySimple,
   PhEye,
   PhEyeSlash,
-  PhFlag,
   PhGraph,
   PhLightning,
   PhMoonStars,
@@ -21,7 +20,7 @@ import {
 } from '@phosphor-icons/vue';
 import { klona } from 'klona';
 import { storeToRefs } from 'pinia';
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { chatCompletion, fetchModelList } from './api';
 import { syncWorldbookEntry } from './inject';
 import { buildInjectionPrompt } from './prompts';
@@ -39,12 +38,6 @@ import { 建世界数据环境, 清空世界, 移除事件, 移除势力, 移除
 import { 取根变量 } from './主题';
 import WorldEditForm from './世界编辑表单.vue';
 import { 使用面板机制 } from './面板机制';
-import { useHost } from './host';
-import { 编排一次, 读取主线存档, 取编排取消句柄, 写入主线存档 } from './编排';
-import { 同步主线条目 } from './主线条目';
-import { 渲染主线, 是空主线, type 主线 } from './主线';
-// 主线草稿 这个名字在 主线编辑.ts 里同时是函数与同名 interface(一个「造草稿」一个「草稿的形状」)
-import { 债条数上限, 债状态表, 草稿加一条债, 合并草稿, 合并草稿未封顶, 主线草稿, 超上限提示 } from './主线编辑';
 
 // ---------------------------------------------------------------------------
 // stores
@@ -92,7 +85,7 @@ const {
  *  这是"TS 的值 → CSS 的变量"之间唯一的那一个映射点(样式表里一律 var(...) 引用) */
 const 根样式 = computed(() => 取根变量(theme.value));
 
-const tab = ref<'now' | 'chronicle' | 'factions' | 'world' | 'mainline' | 'logs' | 'settings'>('now');
+const tab = ref<'now' | 'chronicle' | 'factions' | 'world' | 'logs' | 'settings'>('now');
 
 // ---------------------------------------------------------------------------
 // 世界数据视图
@@ -504,166 +497,6 @@ function toggleTrail(key: string) {
   trailOpen.value[key] = !trailOpen.value[key];
 }
 
-// ---------------------------------------------------------------------------
-// 主线页(第七个页签): 看这条长线、手改它、手动编排
-// 数据层的规矩是给 AI 的(写下即冻结); 用户纠错走 主线编辑.ts 那条**纯转换**通道(合并草稿 不判冻结),
-// 落库与世界页同款: 写存档 → 同步「【主线·本幕】」条目 → toast —— 逻辑都收在下面几个函数里, 不堆在模板里。
-// ---------------------------------------------------------------------------
-
-/** 存档里那一份(合并草稿的基准: 债的「时间」这类不进表单的字段从它取) */
-const 主线存档 = ref<主线 | null>(null);
-/** 面板在编的草稿(v-model 直接绑它; 点「保存」才落库) */
-const 线草稿 = ref<主线草稿 | null>(null);
-/** 读不到聊天/存档时给用户的一句话(有它就不渲染表单, 免得白屏) */
-const 主线读取错误 = ref('');
-const 主线保存中 = ref(false);
-/** 「编排一次」跑着的时候: 按钮换成「取消」 */
-const 编排跑着 = ref(false);
-/** 拉下来那一刻的草稿(净稿): 切回页签时只有没动过才重拉, 免得把在编的改动冲掉 */
-let 净草稿 = '';
-
-function 拉主线() {
-  try {
-    const 存档 = 读取主线存档(useHost());
-    主线存档.value = 存档;
-    线草稿.value = 主线草稿(存档);
-    净草稿 = JSON.stringify(线草稿.value);
-    主线读取错误.value = '';
-  }
-  catch (error) {
-    // 拿不到宿主/聊天变量时不白屏: 给一句人话, 页面就不渲染表单(编排一次 那条路自己也会失败并 toast)
-    console.warn('[主线] 读取存档失败(面板):', error);
-    主线存档.value = null;
-    线草稿.value = null;
-    净草稿 = '';
-    主线读取错误.value = '暂时读不到这条聊天的主线存档——先进一个聊天, 再打开这个页签。';
-  }
-}
-
-/** 草稿动过没有(动过就不在切页签时自动重拉, 免得把正在改的东西冲掉) */
-function 草稿动过(): boolean {
-  return !!线草稿.value && JSON.stringify(线草稿.value) !== 净草稿;
-}
-
-// 面板一建起来就先拉一份(此时还没点开页签也不亏: 编排一次 按钮进来就能用), 之后每次切进来再看要不要重拉
-拉主线();
-watch(tab, 值 => {
-  if (值 === 'mainline' && !草稿动过())
-    拉主线();
-});
-
-/** 页面容器(.yh-body) —— 各页各自滚(滚动容器是那一页自己的 .yh-page), 切页签后要从这里找到当前那一页 */
-const bodyEl = ref<HTMLElement | null>(null);
-
-// 切页签后把滚动位置归零: 模板里那几个页面都是 <div class="yh-page">, v-if/v-else-if 换分支时 Vue 认为
-// 是同一个节点就**复用元素**, 于是从别的长页面切到「主线」会停在半中腰(上一页的滚动位置被原样带过来)。
-// 挂在 watch(tab) 上: 只有页签真的变了才归零 —— 拉主线 / 编排回来这类数据刷新不会把人弹回顶部。
-watch(tab, async () => {
-  await nextTick(); // 等这一页渲染完再设, 免得被这一次渲染覆盖
-  const 滚动容器 = bodyEl.value?.querySelector<HTMLElement>('.yh-page');
-  if (滚动容器)
-    滚动容器.scrollTop = 0;
-});
-
-/** 合并 + 封顶: 点「保存」后真正落库的那一份(注入预览也用它) */
-const 主线可保存 = computed(() => (线草稿.value && 主线存档.value ? 合并草稿(主线存档.value, 线草稿.value) : null));
-/** 合并但**没封顶**: 条数与上限提示说的是它(封顶过后就看不见"会淘汰谁"了) */
-const 主线未封顶 = computed(() => (线草稿.value && 主线存档.value ? 合并草稿未封顶(主线存档.value, 线草稿.value) : null));
-const 债条数 = computed(() => 主线未封顶.value?.债.length ?? 0);
-const 上限提示 = computed(() => (主线未封顶.value ? 超上限提示(主线未封顶.value) : null));
-const 终点成形 = computed(() => Boolean(主线未封顶.value?.终点.成形));
-const 主线是空的 = computed(() => (主线存档.value ? 是空主线(主线存档.value) : true));
-/** 注入给主 AI 的那段文本: 空主线按"整条不注入"显示成空串(模板里给出「（空：不会注入）」) */
-const 注入预览 = computed(() => {
-  const 一份 = 主线可保存.value;
-  return 一份 && !是空主线(一份) ? 渲染主线(一份) : '';
-});
-
-/**
- * 手动编排一次: 跑着的时候按钮就是「取消」(取消 = 取编排取消句柄()?.abort())。
- * 编排一次 自己全程不抛错, 这里的 try/catch 只是兜底 —— 真炸了也别让按钮卡在忙碌态。
- */
-async function 手动编排() {
-  if (编排跑着.value) {
-    取编排取消句柄()?.abort();
-    return;
-  }
-  编排跑着.value = true;
-  try {
-    await 编排一次(useHost(), settings.value, true);
-    拉主线();
-  }
-  catch (error) {
-    console.error('[主线] 手动编排失败:', error);
-    toastError(error instanceof Error ? error.message : String(error), '主线');
-  }
-  finally {
-    编排跑着.value = false;
-  }
-}
-
-/**
- * 重置编排位置: 只把存档里的「上次编排」摘掉(终点/幕/债/回顾 原样带过去), **不在这里偷偷跑一轮** ——
- * 锚点没了之后, 下一轮会按「最近 N 层」重新锚定并立刻编排(不必再等频率攒够); 想现在就跑, 点旁边的「编排一次」。
- */
-function 重置编排位置() {
-  if (编排跑着.value)
-    return;
-  try {
-    const host = useHost();
-    const 库 = 读取主线存档(host);
-    写入主线存档(host, { 终点: 库.终点, 幕: 库.幕, 债: 库.债, 回顾: 库.回顾 });
-    拉主线();
-    toastSuccess('已清掉编排位置: 下一轮会按「最近 N 层」重新锚定并立刻编排', '主线');
-  }
-  catch (error) {
-    console.error('[主线] 重置编排位置失败:', error);
-    toastError(error instanceof Error ? error.message : String(error), '主线');
-  }
-}
-
-/** 保存: 合并草稿(手改不受冻结限制) → 封顶(合并草稿 里已过一遍) → 写存档 → 同步世界书条目 → toast */
-async function 保存主线() {
-  if (!线草稿.value || !主线存档.value || 主线保存中.value)
-    return;
-  主线保存中.value = true;
-  try {
-    const host = useHost();
-    // 点开页签之后可能换过聊天、或编排刚写过一遍: 基准变了就先重新载入, 不拿旧草稿盖掉现在那一份
-    if (JSON.stringify(读取主线存档(host)) !== JSON.stringify(主线存档.value)) {
-      拉主线();
-      toastWarning('主线存档刚变过(换过聊天, 或刚编排过), 已重新载入——请确认后再点一次保存', '主线');
-      return;
-    }
-    const 主线值 = 合并草稿(主线存档.value, 线草稿.value);
-    写入主线存档(host, 主线值);
-    // 注入开关关着就一个字都不写(与 编排一次 同口径: 关掉 = 不动那条世界书条目)
-    const 同步了 = Boolean(settings.value.主线.注入世界书条目);
-    if (同步了)
-      await 同步主线条目(host, 主线值, true);
-    拉主线();
-    const 欠着 = 主线值.债.filter(一笔 => 一笔.状态 === '欠着').length;
-    toastSuccess(
-      `主线已保存: 第 ${主线值.幕.序号} 幕, 欠着 ${欠着} 笔${同步了 ? ', 注入条目已同步' : '(注入开关关着, 未写条目)'}`,
-      '烟火',
-    );
-  }
-  catch (error) {
-    console.error('[主线] 保存失败:', error);
-    toastError(error instanceof Error ? error.message : String(error), '主线');
-  }
-  finally {
-    主线保存中.value = false;
-  }
-}
-
-/** 「加一条债」: 往在编的草稿里追加一行空债(编号只读、由代码发, 内容留给用户填) */
-function 添加一条债() {
-  if (!线草稿.value)
-    return;
-  线草稿.value = 草稿加一条债(线草稿.value);
-}
-
 // (挂载/卸载的接线随面板机制一起搬到了 面板机制.ts: 恢复偏好 → 定默认锚点 → 挂阴影层 → 应用 iframe 尺寸)
 
 const tabs = [
@@ -671,7 +504,6 @@ const tabs = [
   { key: 'chronicle', label: '风闻' },
   { key: 'factions', label: '势力' },
   { key: 'world', label: '世界' },
-  { key: 'mainline', label: '主线' },
   { key: 'logs', label: '日志' },
   { key: 'settings', label: '设置' },
 ] as const;
@@ -754,7 +586,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
           </button>
         </nav>
 
-        <div ref="bodyEl" class="yh-body">
+        <div class="yh-body">
           <!-- ============ 此刻 ============ -->
           <div v-if="tab === 'now'" class="yh-page">
             <div class="yh-now-head">
@@ -1324,181 +1156,6 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
             </div>
           </div>
 
-          <!-- ============ 主线 ============ -->
-          <!-- 第七个页签: 主角这条戏的长线(终点/幕/债/回顾)。数据层只给"给 AI 的规矩", 这里是给人纠错的:
-               改完点「保存」= 合并草稿(不判冻结) → 封顶 → 写存档 → 同步「【主线·本幕】」条目 -->
-          <div v-else-if="tab === 'mainline'" class="yh-page yh-page-mainline">
-            <div v-if="主线读取错误" class="yh-empty">
-              <PhFlag :size="26" weight="light" />
-              <p>{{ 主线读取错误 }}</p>
-            </div>
-
-            <template v-else-if="线草稿">
-              <div class="yh-mainline-actions">
-                <button class="yh-btn yh-btn-primary" :class="{ 'is-busy': 编排跑着 }" @click="手动编排">
-                  <PhLightning v-if="!编排跑着" :size="13" weight="fill" />
-                  <PhX v-else :size="13" weight="regular" />
-                  {{ 编排跑着 ? '取消' : '编排一次' }}
-                </button>
-                <button class="yh-btn" :disabled="编排跑着" @click="重置编排位置">
-                  <PhFlag :size="13" weight="regular" />重置编排位置
-                </button>
-                <button class="yh-btn yh-btn-primary" :disabled="主线保存中 || 编排跑着" @click="保存主线">
-                  <PhCheck :size="13" weight="regular" />{{ 主线保存中 ? '保存中…' : '保存' }}
-                </button>
-              </div>
-              <p v-if="主线是空的" class="yh-world-hint">
-                这条聊天还没有主线——点「编排一次」让 AI 起一个, 也可以直接在下面手写
-              </p>
-
-              <div class="yh-world-body">
-                <!-- 终点 -->
-                <details class="yh-world-sec" open>
-                  <summary>
-                    <PhCaretDown class="yh-world-caret" :size="12" weight="bold" />
-                    <span>终点</span>
-                    <em>{{ 终点成形 ? '已成形' : '未成形' }}</em>
-                  </summary>
-                  <div class="yh-mainline-grid">
-                    <label class="yh-field">
-                      <span class="yh-field-label">类型</span>
-                      <input v-model="线草稿.终点.类型" type="text" class="yh-input" placeholder="如 宿敌 / 人祸 / 崩塌" />
-                    </label>
-                    <label class="yh-field">
-                      <span class="yh-field-label">量级</span>
-                      <input v-model="线草稿.终点.量级" type="text" class="yh-input" placeholder="如 一城 / 一宗 / 天下" />
-                    </label>
-                  </div>
-                  <label class="yh-field yh-mainline-row">
-                    <span class="yh-field-label">候选</span>
-                    <input
-                      v-model="线草稿.终点.候选"
-                      type="text"
-                      class="yh-input"
-                      placeholder="具体对手的名字(人名 / 势力名 / 事件名)"
-                    />
-                  </label>
-                  <p class="yh-mainline-note">
-                    写下即冻结（终点不可变）；候选是具体对手的名字，第 3 幕结束之前必须从世界已有的势力/事件里挑出来
-                  </p>
-                </details>
-
-                <!-- 本幕 -->
-                <details class="yh-world-sec" open>
-                  <summary>
-                    <PhCaretDown class="yh-world-caret" :size="12" weight="bold" />
-                    <span>本幕</span>
-                    <em>第 {{ 线草稿.幕.序号 }} 幕</em>
-                  </summary>
-                  <label class="yh-field">
-                    <span class="yh-field-label">结束条件</span>
-                    <input
-                      v-model="线草稿.幕.结束条件"
-                      type="text"
-                      class="yh-input"
-                      placeholder="达成它这一幕才算完（不可撤销的那件事）"
-                    />
-                  </label>
-                  <label class="yh-field yh-mainline-row">
-                    <span class="yh-field-label">期限</span>
-                    <input v-model="线草稿.幕.期限" type="text" class="yh-input" placeholder="如 第 20 楼之前 / 0137-06-12" />
-                  </label>
-                  <p class="yh-mainline-note">结束条件是这一幕的脊梁；期限可以改期</p>
-                </details>
-
-                <!-- 债 -->
-                <details class="yh-world-sec" open>
-                  <summary>
-                    <PhCaretDown class="yh-world-caret" :size="12" weight="bold" />
-                    <span>债</span>
-                    <em>{{ 债条数 }} / {{ 债条数上限 }}</em>
-                  </summary>
-                  <p v-if="上限提示" class="yh-mainline-warn">{{ 上限提示 }}</p>
-                  <div v-if="线草稿.债.length > 0" class="yh-debt-list">
-                    <div v-for="(一笔, 序号) in 线草稿.债" :key="`${一笔.编号}-${序号}`" class="yh-debt-row">
-                      <span class="yh-debt-no" :title="`第 ${序号 + 1} 条`">{{ 一笔.编号 }}</span>
-                      <input
-                        v-model="一笔.内容"
-                        type="text"
-                        class="yh-input yh-debt-text"
-                        placeholder="欠的是什么（一句承诺 / 一件物品的去向 / 一段关系）"
-                      />
-                      <select
-                        v-model="一笔.状态"
-                        class="yh-input yh-select yh-debt-state"
-                        :class="`is-${一笔.状态}`"
-                      >
-                        <option v-for="状态 in 债状态表" :key="状态" :value="状态">{{ 状态 }}</option>
-                      </select>
-                      <input
-                        v-model="一笔.结果"
-                        type="text"
-                        class="yh-input yh-debt-text"
-                        placeholder="怎么收的（已还 / 作废时写）"
-                      />
-                    </div>
-                  </div>
-                  <p v-else class="yh-mini-empty">还没有债——正文里真的出现「答应 / 欠下」时记一条</p>
-                  <p class="yh-mainline-note">
-                    编号只读、由代码分配（淘汰过的号不复用）；内容留空的整条丢弃；状态只有 欠着 / 已还 / 作废
-                  </p>
-                  <div class="yh-mainline-add">
-                    <button class="yh-btn yh-btn-sm" @click="添加一条债">
-                      <PhPlus :size="11" weight="bold" />加一条债
-                    </button>
-                  </div>
-                </details>
-
-                <!-- 回顾 -->
-                <details class="yh-world-sec" open>
-                  <summary>
-                    <PhCaretDown class="yh-world-caret" :size="12" weight="bold" />
-                    <span>回顾</span>
-                  </summary>
-                  <textarea
-                    v-model="线草稿.回顾"
-                    class="yh-input yh-textarea"
-                    rows="5"
-                    placeholder="谁答应过谁、哪件事还没做完、上次见面是什么气氛"
-                  ></textarea>
-                  <p class="yh-mainline-note">5~10 句，只写到这为止发生了什么；它是唯一允许整体重写的字段</p>
-                </details>
-
-                <!-- 上次编排(只读) -->
-                <details class="yh-world-sec" open>
-                  <summary>
-                    <PhCaretDown class="yh-world-caret" :size="12" weight="bold" />
-                    <span>上次编排</span>
-                  </summary>
-                  <dl class="yh-world-fields">
-                    <div>
-                      <dt>楼层</dt>
-                      <dd>{{ 线草稿.上次编排 ? `#${线草稿.上次编排.楼层}` : '—' }}</dd>
-                    </div>
-                    <div>
-                      <dt>时间</dt>
-                      <dd>{{ 线草稿.上次编排?.时间 || '—' }}</dd>
-                    </div>
-                  </dl>
-                  <p class="yh-mainline-note">
-                    下一轮从这层之后接着编；「重置编排位置」会清掉它, 让下一轮按「最近 N 层」重新锚定
-                  </p>
-                </details>
-
-                <!-- 注入预览(可折叠): 保存之后主 AI 每回合读到的就是这段 -->
-                <details class="yh-world-sec">
-                  <summary>
-                    <PhCaretDown class="yh-world-caret" :size="12" weight="bold" />
-                    <span>注入预览</span>
-                    <em>{{ 注入预览 ? `${注入预览.length} 字` : '（空：不会注入）' }}</em>
-                  </summary>
-                  <pre v-if="注入预览" class="yh-pre yh-pre-short">{{ 注入预览 }}</pre>
-                  <p v-else class="yh-mini-empty">（空：不会注入）</p>
-                </details>
-              </div>
-            </template>
-          </div>
-
           <!-- ============ 日志 ============ -->
           <div v-else-if="tab === 'logs'" class="yh-page yh-page-logs">
             <div class="yh-log-left">
@@ -1589,7 +1246,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
           </div>
 
           <!-- ============ 设置 ============ -->
-          <div v-else-if="tab === 'settings'" class="yh-page yh-page-settings">
+          <div v-else class="yh-page yh-page-settings">
             <div class="yh-set-stack">
               <div class="yh-set-col">
                 <h3 class="yh-col-title">接口配置</h3>
@@ -1788,42 +1445,6 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                     >
                   </label>
                 </div>
-                <h3 class="yh-col-title">主线</h3>
-                <div class="yh-toggles">
-                  <label class="yh-toggle">
-                    <input v-model="settings.主线.启用" type="checkbox" />
-                    <span class="yh-toggle-track"></span>
-                    <span class="yh-toggle-text"
-                      >启用主线编排<em>维护主角这条戏的长线：终点 / 第几幕 / 欠着哪些债</em></span
-                    >
-                  </label>
-                  <label class="yh-toggle">
-                    <input v-model="settings.主线.注入世界书条目" type="checkbox" />
-                    <span class="yh-toggle-track"></span>
-                    <span class="yh-toggle-text"
-                      >注入主线到主AI<em>写入角色卡主世界书常驻条目「【主线·本幕】」，切聊天自动重写</em></span
-                    >
-                  </label>
-                </div>
-                <div class="yh-field-pair">
-                  <label class="yh-field">
-                    <span class="yh-field-label">更新频率</span>
-                    <input v-model.number="settings.主线.更新频率" type="number" min="1" max="50" class="yh-input" />
-                  </label>
-                  <label class="yh-field">
-                    <span class="yh-field-label">每次发送层数</span>
-                    <input
-                      v-model.number="settings.主线.每次发送层数"
-                      type="number"
-                      min="1"
-                      max="50"
-                      class="yh-input"
-                    />
-                  </label>
-                </div>
-                <span class="yh-field-label" style="font-weight: 400; color: var(--yh-ink-faint)"
-                  >每 N 层跑一次；每次最多发送 N 层（上限，不会漏楼层）</span
-                >
               </div>
               <div class="yh-set-col">
                 <h3 class="yh-col-title">注入主AI</h3>
@@ -1895,7 +1516,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
         <span>{{ world.世界.时间 || '世界时间未知' }}</span>
         <span>快照 {{ world.锚点楼层 >= 0 ? `#${world.锚点楼层}` : '无' }}</span>
         <!-- 版本号: 与 README「更新日志」顶部那条的版本保持一致, 改版本时两处一起改 -->
-        <span>v2.4 · 烟火</span>
+        <span>v2.3 · 烟火</span>
       </footer>
     </section>
   </div>
@@ -3384,124 +3005,6 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
   .yh-world-act {
     width: 28px;
     height: 28px;
-  }
-}
-
-/* ---- 主线 ---- */
-/* 配色只用 主题.ts 的 token: 面层 = --yh-raise/--yh-line 系, 文字 = --yh-ink 系(黛墨),
-   提示与取消 = --yh-seal(朱砂), 收束 = --yh-good(青瓷, 与「已了结」同款语汇); 不另造颜色 */
-/* 主线这一页顶部不留白: 吸顶那一行的顶边要正好压在**页面容器的顶边**上 —— 容器自己的 padding-top 会把
-   sticky 的贴顶位置一起下移(实测: 不是 0, 就是这 16px), 贴顶时会露出一条缝, 内容从缝里划过去。
-   所以这点空白改由那一行自己带(下面它的 padding-top 同值), 静置排布与从前一字不差。
-   注意: 负外边距在这儿没用(贴顶位置不看它), 别写。 */
-.yh-root .yh-page-mainline {
-  padding-top: 0;
-}
-/* 吸顶: 这一页比别的页长(改完一笔债, 动作按钮已经被滚出视口), 让这一行贴着页面容器顶部。
-   滚动容器是各页自己的 .yh-page(见上面的 height:100% + overflow-y:auto), 所以 sticky 落在这一行上;
-   底色/分隔线/模糊全走 token(暗夜/白天都不露白砖)。不写 z-index: 它是定位元素, 本就画在这一页的
-   静态内容之后(与 彼方 .bf-dash-side 同款写法), 而面板里的层序只允许来自 主题.ts 的 --yh-z-*。 */
-.yh-mainline-actions {
-  position: sticky;
-  top: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  padding-top: 16px;
-  padding-bottom: 12px;
-  margin-bottom: 12px;
-  border-bottom: 1px solid var(--yh-line);
-  background: color-mix(in srgb, var(--yh-panel) 92%, transparent);
-  backdrop-filter: blur(6px);
-}
-/* 「编排一次」跑起来时这个按钮是「取消」: 朱砂描边(与推进中的「中断」同一个语汇) */
-.yh-page-mainline .yh-btn.is-busy {
-  background: color-mix(in srgb, var(--yh-seal) 12%, transparent);
-  border-color: color-mix(in srgb, var(--yh-seal) 60%, transparent);
-  color: var(--yh-seal);
-}
-.yh-mainline-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 9px 12px;
-}
-/* 同一区块里紧跟上一个控件的字段(给一点上间距) */
-.yh-mainline-row {
-  margin-top: 9px;
-}
-.yh-mainline-note {
-  margin: 8px 0 0;
-  font-size: 11.5px;
-  line-height: 1.55;
-  color: var(--yh-ink-faint);
-}
-.yh-mainline-warn {
-  margin: 0 0 8px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--yh-seal) 45%, transparent);
-  background: color-mix(in srgb, var(--yh-seal) 8%, transparent);
-  font-size: 11.5px;
-  line-height: 1.55;
-  color: var(--yh-seal);
-}
-.yh-debt-list {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-/* 一条债一行: 编号(只读) | 内容 | 状态 | 结果 */
-.yh-debt-row {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1.4fr) max-content minmax(0, 1fr);
-  gap: 6px;
-  align-items: center;
-}
-.yh-debt-no {
-  min-width: 30px;
-  font-size: 11.5px;
-  letter-spacing: 0.06em;
-  color: var(--yh-ink-faint);
-}
-.yh-debt-text {
-  min-width: 0;
-}
-/* 「加一条债」在债列表的下面(不是标题栏里): 加完一行就顺手接着填 */
-.yh-mainline-add {
-  margin-top: 9px;
-}
-/* 状态下拉只要"够放下三个状态"的宽度 —— 多带一层 .yh-page-mainline: .yh-root .yh-input 的 width:100% 更专 */
-.yh-page-mainline .yh-debt-state {
-  width: auto;
-  min-width: 78px;
-}
-/* 已还 = 青瓷(收束了); 作废 = 弱化到灰(这条不算数了) —— 与 世界页 .yh-maturity-* 同一套写法 */
-.yh-page-mainline .yh-debt-state.is-已还 {
-  border-color: color-mix(in srgb, var(--yh-good) 55%, transparent);
-  color: var(--yh-good);
-}
-.yh-page-mainline .yh-debt-state.is-作废 {
-  color: var(--yh-ink-faint);
-}
-@media (max-width: 700px) {
-  /* 窄屏: 编号 + 内容 一行, 状态 + 结果 一行(与面板的窄屏断点同一处 700) */
-  .yh-debt-row {
-    grid-template-columns: max-content minmax(0, 1fr);
-  }
-  .yh-mainline-grid {
-    grid-template-columns: 1fr;
-  }
-  /* 吸顶那一行: 三个按钮在窄屏铺不下一行就会被 flex-wrap 折成两行、左右对不齐 —— 改成一行等分、文字居中;
-     上内边距跟着窄屏的页面留白(12px)一起收, 静置位置还是老样子, 贴顶时也不露缝 */
-  .yh-mainline-actions {
-    flex-wrap: nowrap;
-    gap: 6px;
-    padding-top: 12px;
-  }
-  .yh-mainline-actions .yh-btn {
-    flex: 1 1 0;
-    min-width: 0;
-    justify-content: center;
   }
 }
 </style>

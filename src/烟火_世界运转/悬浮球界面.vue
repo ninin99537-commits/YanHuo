@@ -21,7 +21,7 @@ import {
 } from '@phosphor-icons/vue';
 import { klona } from 'klona';
 import { storeToRefs } from 'pinia';
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { chatCompletion, fetchModelList } from './api';
 import { syncWorldbookEntry } from './inject';
 import { buildInjectionPrompt } from './prompts';
@@ -552,6 +552,19 @@ watch(tab, 值 => {
     拉主线();
 });
 
+/** 页面容器(.yh-body) —— 各页各自滚(滚动容器是那一页自己的 .yh-page), 切页签后要从这里找到当前那一页 */
+const bodyEl = ref<HTMLElement | null>(null);
+
+// 切页签后把滚动位置归零: 模板里那几个页面都是 <div class="yh-page">, v-if/v-else-if 换分支时 Vue 认为
+// 是同一个节点就**复用元素**, 于是从别的长页面切到「主线」会停在半中腰(上一页的滚动位置被原样带过来)。
+// 挂在 watch(tab) 上: 只有页签真的变了才归零 —— 拉主线 / 编排回来这类数据刷新不会把人弹回顶部。
+watch(tab, async () => {
+  await nextTick(); // 等这一页渲染完再设, 免得被这一次渲染覆盖
+  const 滚动容器 = bodyEl.value?.querySelector<HTMLElement>('.yh-page');
+  if (滚动容器)
+    滚动容器.scrollTop = 0;
+});
+
 /** 合并 + 封顶: 点「保存」后真正落库的那一份(注入预览也用它) */
 const 主线可保存 = computed(() => (线草稿.value && 主线存档.value ? 合并草稿(主线存档.value, 线草稿.value) : null));
 /** 合并但**没封顶**: 条数与上限提示说的是它(封顶过后就看不见"会淘汰谁"了) */
@@ -741,7 +754,7 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
           </button>
         </nav>
 
-        <div class="yh-body">
+        <div ref="bodyEl" class="yh-body">
           <!-- ============ 此刻 ============ -->
           <div v-if="tab === 'now'" class="yh-page">
             <div class="yh-now-head">
@@ -3377,13 +3390,29 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
 /* ---- 主线 ---- */
 /* 配色只用 主题.ts 的 token: 面层 = --yh-raise/--yh-line 系, 文字 = --yh-ink 系(黛墨),
    提示与取消 = --yh-seal(朱砂), 收束 = --yh-good(青瓷, 与「已了结」同款语汇); 不另造颜色 */
+/* 主线这一页顶部不留白: 吸顶那一行的顶边要正好压在**页面容器的顶边**上 —— 容器自己的 padding-top 会把
+   sticky 的贴顶位置一起下移(实测: 不是 0, 就是这 16px), 贴顶时会露出一条缝, 内容从缝里划过去。
+   所以这点空白改由那一行自己带(下面它的 padding-top 同值), 静置排布与从前一字不差。
+   注意: 负外边距在这儿没用(贴顶位置不看它), 别写。 */
+.yh-root .yh-page-mainline {
+  padding-top: 0;
+}
+/* 吸顶: 这一页比别的页长(改完一笔债, 动作按钮已经被滚出视口), 让这一行贴着页面容器顶部。
+   滚动容器是各页自己的 .yh-page(见上面的 height:100% + overflow-y:auto), 所以 sticky 落在这一行上;
+   底色/分隔线/模糊全走 token(暗夜/白天都不露白砖)。不写 z-index: 它是定位元素, 本就画在这一页的
+   静态内容之后(与 彼方 .bf-dash-side 同款写法), 而面板里的层序只允许来自 主题.ts 的 --yh-z-*。 */
 .yh-mainline-actions {
+  position: sticky;
+  top: 0;
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+  padding-top: 16px;
   padding-bottom: 12px;
   margin-bottom: 12px;
   border-bottom: 1px solid var(--yh-line);
+  background: color-mix(in srgb, var(--yh-panel) 92%, transparent);
+  backdrop-filter: blur(6px);
 }
 /* 「编排一次」跑起来时这个按钮是「取消」: 朱砂描边(与推进中的「中断」同一个语汇) */
 .yh-page-mainline .yh-btn.is-busy {
@@ -3461,6 +3490,18 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
   }
   .yh-mainline-grid {
     grid-template-columns: 1fr;
+  }
+  /* 吸顶那一行: 三个按钮在窄屏铺不下一行就会被 flex-wrap 折成两行、左右对不齐 —— 改成一行等分、文字居中;
+     上内边距跟着窄屏的页面留白(12px)一起收, 静置位置还是老样子, 贴顶时也不露缝 */
+  .yh-mainline-actions {
+    flex-wrap: nowrap;
+    gap: 6px;
+    padding-top: 12px;
+  }
+  .yh-mainline-actions .yh-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: center;
   }
 }
 </style>

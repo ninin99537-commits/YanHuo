@@ -76,6 +76,26 @@ export const SettingsSchema = z
         防截断: z.boolean().default(false),
       })
       .prefault({}),
+    /** 主线: 主角这条戏的长线(终点/幕/债/回顾)。独立于世界推进 —— 有自己的开关、频率与窗口上限,
+     *  但复用「运转」里的破限/预填充/头部填充/防截断(请求形状与世界推进完全同款) */
+    主线: z
+      .object({
+        /** 启用主线编排: 关闭后不再调用接口编排(已有主线数据保留, 也不再更新世界书条目) */
+        启用: z.boolean().default(true),
+        /** 每 N 层(未隐藏的 AI 回复)编排一次; 1 = 每层都编排 */
+        更新频率: z.coerce
+          .number()
+          .default(3)
+          .transform(value => Math.max(1, Math.round(value))),
+        /** 每次发送给模型的最大楼层数: 新增楼层超过它时从最早处截断、只发最近一段(漏掉的层数写日志) */
+        每次发送层数: z.coerce
+          .number()
+          .default(3)
+          .transform(value => Math.max(1, Math.round(value))),
+        /** 把主线写入角色卡主世界书的常驻条目「【主线·本幕】」(蓝灯常开, 主 AI 每回合读到) */
+        注入世界书条目: z.boolean().default(true),
+      })
+      .prefault({}),
     /** 楼层标签过滤: 处理发给世界引擎的回复内容 */
     标签: z
       .object({

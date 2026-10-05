@@ -3,6 +3,7 @@ import { pinia } from './pinia';
 import { getSettings } from './settings';
 import { captureConsole, STORAGE_KEY, useDebugStore, useStateStore } from './state';
 import { updateWorld } from './update';
+import { 触发编排 } from './编排';
 import { syncWorldbookEntry } from './inject';
 import { useHost } from './host';
 import { 有世界数据 } from './世界数据';
@@ -96,6 +97,11 @@ $(() => {
     clearPendingTick();
     tickTimer = setTimeout(() => {
       tickTimer = null;
+      // 主线是**自己的一路**(有自己的频率闸门 该编排了吗, 总开关是 设置.主线.启用):
+      // 调在"调用烟火那一路"**之前**, 于是它的任何早退(关总开关 / 关自动更新 / 正文过短 /
+      // 世界频率没到)都带不走主线; 依旧**不 await** —— 另一路模型调用不许卡住消息处理。
+      // 跳过/失败都不推进「上次编排」, 于是下一轮还会重试这一段。手动入口是同一个函数(下一步的面板绑 触发编排(true))。
+      触发编排(false);
       handleMessageReceived(message_id).catch(error => {
         console.error('[烟火] 消息处理失败:', error);
       });
@@ -135,6 +141,10 @@ $(() => {
         store.reload();
         console.info('[烟火] 聊天就绪后补读世界快照');
       }
+      // 启动补读之后照做一次主线判断(与消息回调同一路): 脚本可能在聊天尚未加载完时启动,
+      // 那时读到的楼层不全, 频率闸门会算错 —— 等聊天就绪再补一次; 依旧不 await。
+      // 主线只认自己的总开关(设置.主线.启用, 在 该编排了吗 里判), 与烟火那一路的开关无关。
+      触发编排(false);
     } catch {
       // 忽略
     }

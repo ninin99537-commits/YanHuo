@@ -15,8 +15,12 @@ import { useHost } from './host';
 import { 取EJS模板环境, 组装求值上下文, 收集表格名, 求值条目文本, type 求值环境 } from '../共用/条目求值';
 
 /** 自动排除的世界书条目特征(名字/内容开头): 仅烟火自己写入的条目——不把自身输出当设定。
- * 彼方等其它插件的条目不排除: 它们也是世界的一部分, 与主 AI 读到的保持一致 */
-const SELF_EXCLUDE_MARKS = ['【烟火】世界动向', '[烟火 · 世界动向]'];
+ * 彼方等其它插件的条目不排除: 它们也是世界的一部分, 与主 AI 读到的保持一致。
+ * 「【主线·本幕】」是主线条目(主线条目.ts): 它写的是**作者视角的戏骨架**, 不是世界动向 ——
+ * 不排除的话, 烟火下一轮会把这段"戏的骨架"当成世界线读进世界引擎, 污染它的推演。
+ * 这份名单只认"名字/comment/内容开头"; 条目被用户改名后就匹配不上了, 所以 isExcluded 还有一条
+ * **写入时打的记号**(extra.yanhuo / extra.主线, 见 inject.ts 与 主线条目.ts)作兜底。 */
+const SELF_EXCLUDE_MARKS = ['【烟火】世界动向', '[烟火 · 世界动向]', '【主线·本幕】'];
 
 /** 共用求值器要的平台能力与文案: 能力全部从 host 接缝接上(那个 module 自己不碰平台) */
 function 烟火求值环境(): 求值环境 {
@@ -53,7 +57,10 @@ export async function getActiveWorldbookText(scanText: string, options: Worldboo
     const excludes = [...(options.excludeNames ?? []), ...SELF_EXCLUDE_MARKS].map(s => String(s).trim()).filter(Boolean);
     const isExcluded = (entry: any) => {
         if (!entry) return false;
+        // 认领记号(与 主线条目.ts / inject.ts 写入时用的一致): 用户改了名字/comment/开头,
+        // 按名字那一路就失效了 —— 有 extra 这一路才敢说"不管你怎么改名都排除得掉"。
         if (entry?.extra?.yanhuo === true) return true;
+        if (entry?.extra?.主线 === true) return true;
         const name = String(entry.name ?? '').trim();
         const comment = String(entry.comment ?? '').trim();
         const content = String(entry.content ?? '').trim();

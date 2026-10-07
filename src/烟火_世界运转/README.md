@@ -115,6 +115,23 @@ user:   任务 (世界状态/最近剧情/正文/世界书)
 
 无脚本按钮——所有手动操作都在面板里。
 
+## 发布到 GitHub（重要 · 别忘了）
+
+本项目发布到 **`https://github.com/ninin99537-commits/YanHuo`**（别名 **YanHuo**）。用户通过 jsdelivr 直接 import 该仓库的发行产物：
+
+```
+import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/YanHuo@master/dist/烟火_世界运转/index.js';
+```
+
+**上传前**：
+1. 改动源码（`src/烟火_世界运转/**`，涉及共用时连 `src/共用/**` 一起）。
+2. `pnpm build`，确认 `dist/烟火_世界运转/index.js`（+ `.js.map`）重新生成、含你的改动。
+3. 提交内容 = **源码改动 + 重新构建的 `dist/烟火_世界运转/index.js`**（这个仓库 git 跟踪 dist，jsdelivr 导入的正是它）。
+4. 推送到 `YanHuo` 的 `master`（fast-forward，一格一提交）。
+
+> ⚠️ `YanHuo` 仓库同时发布烟火与彼方两个插件（`dist/烟火_世界运转/` 和 `dist/彼方_NPC幕后生命状态系统/` 都在里面）；
+> 写有彼方相关改动要传时，它的「官方发布仓库」其实是 `BiFang`，别传混了。
+
 ---
 
 # 更新日志

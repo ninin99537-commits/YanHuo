@@ -45,7 +45,9 @@ $(() => {
         border: 'none',
         outline: 'none',
         boxShadow: 'none',
-        pointerEvents: 'auto',
+        // 挂载成功前绝不吃指针事件：壳一插进 DOM 就停在 [0,0] 且 40×40，
+        // 挂载一旦抛错它就永久钉在那里吃掉左上角全部指针事件，压住别的插件。
+        pointerEvents: 'none',
         zIndex: '2147483000',
     })
         .appendTo('body');
@@ -53,6 +55,8 @@ $(() => {
         const nestedDoc = $app[0].contentDocument;
         copyStylesTo(nestedDoc);
         app.mount(nestedDoc.body);
+        // mount 走通 ⇒ onMounted 已把球迁走，此刻才接管指针事件
+        $app[0].style.pointerEvents = 'auto';
         window.setTimeout(() => copyStylesTo(nestedDoc), 300);
         window.setTimeout(() => copyStylesTo(nestedDoc), 1200);
     });

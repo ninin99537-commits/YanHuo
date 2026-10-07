@@ -25,6 +25,7 @@ import { useHost } from './host';
 import { syncWorldbookEntry } from './inject';
 import { toastError, toastInfo, toastSuccess, toastWarning } from './toast';
 import { 请求并校验 as 共用请求并校验 } from '../共用/模型往返';
+import { createTextFilter } from '../共用/楼层标签过滤';
 import { 事件账目, validateAndNormalize } from './世界数据';
 import { 解析世界载荷 } from './解析';
 
@@ -35,68 +36,6 @@ const TIME_JUMP_PATTERN = /(一夜之间|第二天一早|第二天|次日|隔天
 function detectTimeJump(text: string): string | null {
   const match = text.match(TIME_JUMP_PATTERN);
   return match ? match[0] : null;
-}
-
-// ---------------------------------------------------------------------------
-// 楼层标签过滤(与彼方同款)
-// ---------------------------------------------------------------------------
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function stripTagContent(text: string, tag: string): string {
-  const escaped = escapeRegExp(tag);
-  // 边界排除 ASCII 字母/数字/下划线/连字符: 中文标签需自定义边界, 且防止误匹配带后缀的标签名
-  const boundary = '(?![a-zA-Z0-9_-])';
-  let result = text.replace(new RegExp(`<${escaped}${boundary}[^>]*>[\\s\\S]*?<\\/${escaped}>`, 'gi'), '');
-  result = result.replace(new RegExp(`<${escaped}${boundary}[^>]*\\/?>`, 'gi'), '');
-  return result;
-}
-
-function extractTagContent(text: string, tag: string): string[] {
-  const escaped = escapeRegExp(tag);
-  const boundary = '(?![a-zA-Z0-9_-])';
-  const matches: string[] = [];
-  const re = new RegExp(`<${escaped}${boundary}[^>]*>([\\s\\S]*?)<\\/${escaped}>`, 'gi');
-  for (const match of text.matchAll(re)) {
-    matches.push(match[1].trim());
-  }
-  return matches;
-}
-
-/**
- * 清除"孤立闭合标签"(只有 </tag> 没有配对 <tag> 的残留)。
- * 只删除闭合标签本身, 绝不从文本开头删到它——否则会误伤正文。
- */
-function stripLoneClosingBlocks(text: string, tag: string): string {
-  const escaped = escapeRegExp(tag);
-  const boundary = '(?![a-zA-Z0-9_-])';
-  const closeRe = new RegExp(`</${escaped}${boundary}[^>]*>`, 'gi');
-  return text.replace(closeRe, '');
-}
-
-interface TagFilterSettings {
-  模式: '排除' | '只读';
-  列表: string[];
-}
-
-function createTextFilter(settings: TagFilterSettings): (text: string) => string {
-  const tags = (settings.列表 ?? []).map(tag => tag.trim().replace(/^<|>$/g, '')).filter(Boolean);
-  // 去掉 begin_of_X ... end_of_X 的思维链整块(标记是注释、内容却是纯文本); 再清理剩余 HTML 注释
-  const stripComments = (text: string) =>
-    text
-      .replace(/<!--\s*begin_of_[a-zA-Z0-9_\u4e00-\u9fa5]+[\s\S]*?end_of_[a-zA-Z0-9_\u4e00-\u9fa5]+\s*-->/gi, '')
-      .replace(/<!--[\s\S]*?-->/g, '');
-  if (tags.length === 0) return stripComments;
-  if (settings.模式 === '只读') {
-    return text => {
-      const parts: string[] = [];
-      for (const tag of tags) parts.push(...extractTagContent(text, tag));
-      return stripComments(parts.join('\n\n') || text);
-    };
-  }
-  return text => stripComments(tags.reduce((acc, tag) => stripLoneClosingBlocks(stripTagContent(acc, tag), tag), text));
 }
 
 // ---------------------------------------------------------------------------

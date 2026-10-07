@@ -69,7 +69,7 @@ export async function 收集本轮输入(参数: 取料参数) {
         }
         return null;
     }
-    const filter = 依赖.过滤(settings);
+    const filter = 依赖.过滤(settings.标签 ?? {});
     // 标注每条回复的顺序，最后一条为【最新回复】，让 AI 明确当前场景以最新一条为准
     const reply = recent
         .map((message: any, index: number) => `【${index === recent.length - 1 ? '最新回复' : `较早回复 ${index + 1}`}】\n${filter(message.message)}`)

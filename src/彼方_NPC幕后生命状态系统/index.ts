@@ -47,7 +47,7 @@ async function handleMessageReceived(message_id) {
     // 用原文判断会误以为很长, 过滤后才是真正的剧情正文。
     // 长度统计: 仅剔除换行/制表等结构空白, 保留普通空格——对中文/英文/代码块都更接近真实字数;
     // 旧版把所有 \s+ 全删掉, 英文文本会被严重低估(空格全没, 单词粘连算 1 字)。
-    const filter = createTextFilterExported(settings);
+    const filter = createTextFilterExported(settings.标签);
     const replyText = filter(String(latest.message || '')).replace(/[\r\n\t]+/g, '').trim();
     if (replyText.length < 500) {
         console.warn(`[彼方] 最新正文回复过短(过滤后 ${replyText.length}字), 疑似被截断, 已跳过本次自动更新`);

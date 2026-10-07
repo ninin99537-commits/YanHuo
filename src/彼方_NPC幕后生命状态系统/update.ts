@@ -11,6 +11,7 @@ import { useHost } from './host';
 import { THINKING_FIELD_KEYS, 请求并校验 } from './模型请求';
 import { applyUpdate, extractCurrentTimeHint, maskBaseUrl } from './应用更新';
 import { 收集本轮输入 } from './更新输入';
+import { createTextFilter } from '../共用/楼层标签过滤';
 
 // 这里属于流水线顶层(收尾时要写世界书), 按边界处理, 所以自己构造一次真实宿主。
 // 待 updateNpcStates 拆分(候选2)后, 宿主应从调用方传进来, 而不是在本文件里自己造。
@@ -23,61 +24,6 @@ const TIME_JUMP_PATTERN = /(一夜之间|第二天一早|第二天|次日|隔天
 function detectTimeJump(text) {
     const match = text.match(TIME_JUMP_PATTERN);
     return match ? match[0] : null;
-}
-function escapeRegExp(text) {
-    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-function stripTagContent(text, tag) {
-    const escaped = escapeRegExp(tag);
-    // 边界排除 ASCII 字母/数字/下划线/连字符: \b 只对 ASCII 有效, 中文标签需自定边界;
-    // 必须排除 _ 和 -, 否则标签 "summary" 会误匹配 "<summary_format>"(下划线不算字母数字),
-    // 导致 summary_format 块被当作 summary 误删
-    const boundary = '(?![a-zA-Z0-9_-])';
-    let result = text.replace(new RegExp(`<${escaped}${boundary}[^>]*>[\\s\\S]*?<\\/${escaped}>`, 'gi'), '');
-    result = result.replace(new RegExp(`<${escaped}${boundary}[^>]*\\/?>`, 'gi'), '');
-    return result;
-}
-function extractTagContent(text, tag) {
-    const escaped = escapeRegExp(tag);
-    const boundary = '(?![a-zA-Z0-9_-])';
-    const matches = [];
-    const re = new RegExp(`<${escaped}${boundary}[^>]*>([\\s\\S]*?)<\\/${escaped}>`, 'gi');
-    let match;
-    while ((match = re.exec(text)) !== null) {
-        matches.push(match[1].trim());
-    }
-    return matches;
-}
-/**
- * 清除"孤立闭合标签"(只有 </tag> 没有配对 <tag> 的残留)。
- * **只删除闭合标签本身, 绝不从文本开头删到它**——否则正文里若出现某个过滤标签的
- * 孤立闭合(如模型残留 </summary_format> 或正文合法出现的 </xxx>), 会把整段正文删光。
- * (旧逻辑"从楼层开头删到闭合标签"针对无开标签的思维链, 但误伤正文, 已废弃)
- */
-function stripLoneClosingBlocks(text, tag) {
-    const escaped = escapeRegExp(tag);
-    const boundary = '(?![a-zA-Z0-9_-])';
-    const closeRe = new RegExp(`</${escaped}${boundary}[^>]*>`, 'gi');
-    return text.replace(closeRe, '');
-}
-function createTextFilter(settings) {
-    const tags = (settings.标签?.列表 ?? []).map(tag => tag.trim().replace(/^<|>$/g, '')).filter(Boolean);
-    // 去掉 begin_of_X ... end_of_X 的思维链整块（标记是注释、内容却是纯文本，需连同内容一起删）；再清理剩余 HTML 注释
-    // (正文中的创作注释如 <!-- 模拟段落 -->/<!-- 草稿优化 --> 等一律删除; 无论标签模式是排除还是只读都删)
-    const stripComments = (text) => text
-        .replace(/<!--\s*begin_of_[a-zA-Z0-9_\u4e00-\u9fa5]+[\s\S]*?end_of_[a-zA-Z0-9_\u4e00-\u9fa5]+\s*-->/gi, '')
-        .replace(/<!--[\s\S]*?-->/g, '');
-    if (tags.length === 0)
-        return stripComments;
-    if (settings.标签?.模式 === '只读') {
-        return text => {
-            const parts = [];
-            for (const tag of tags)
-                parts.push(...extractTagContent(text, tag));
-            return stripComments(parts.join('\n\n') || text);
-        };
-    }
-    return text => stripComments(tags.reduce((acc, tag) => stripLoneClosingBlocks(stripTagContent(acc, tag), tag), text));
 }
 function isNameMentioned(text, name) {
     const trimmed = name.trim();

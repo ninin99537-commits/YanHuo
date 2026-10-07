@@ -129,6 +129,10 @@ import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/YanHuo@master/dist/烟火
 3. 提交内容 = **源码改动 + 重新构建的 `dist/烟火_世界运转/index.js`**（这个仓库 git 跟踪 dist，jsdelivr 导入的正是它）。
 4. 推送到 `YanHuo` 的 `master`（fast-forward，一格一提交）。
 
+> 🤖 该仓库有 `[bot] bundle` 工作流：推源后机器人会自动重建 dist 并补一个提交。所以即使
+> 偶尔漏提交 dist，机器人也会兜底重建；但**仍建议手动提交最新 dist**，避免中间态。
+> 推送被拒（non-fast-forward）时，多半是机器人刚补过一行：`git rebase origin/master` 后再推。
+
 > ⚠️ `YanHuo` 仓库同时发布烟火与彼方两个插件（`dist/烟火_世界运转/` 和 `dist/彼方_NPC幕后生命状态系统/` 都在里面）；
 > 写有彼方相关改动要传时，它的「官方发布仓库」其实是 `BiFang`，别传混了。
 

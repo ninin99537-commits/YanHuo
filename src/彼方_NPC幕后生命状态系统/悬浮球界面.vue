@@ -929,6 +929,7 @@ function 盯住收纳坞(): void {
  */
 function 同步贴球锚点(强制 = false): void {
   盯住收纳坞();
+  同步球指针();
   量球();
   const 锚 = 球锚点();
   const 旧 = 贴球锚点.value;
@@ -1287,9 +1288,23 @@ function currentY(): number {
   return anchorY.value ?? viewportH() - 110;
 }
 
+/**
+ * 收纳坞把球**藏起来**却**没搬走球 iframe**, 那个 40×40 就悬在原地白吃点击。
+ * 收纳中且面板没开 → 关掉自己 iframe 的指针事件; 面板一开 / 球被释放 → 立刻还回来。
+ * 只碰本插件自己建的 iframe, 不去动坞。
+ * (坞转发点击用的是 dispatchEvent, 不走命中测试, 所以关掉指针事件不影响坞点开面板)
+ */
+function 同步球指针(): void {
+  const target = frame.value;
+  if (!target) return;
+  const 被收纳 = !!取收纳坞入口(parentWin.value?.document, target);
+  target.style.pointerEvents = 被收纳 && !panelOpen.value ? 'none' : 'auto';
+}
+
 function applyFrame() {
   const target = frame.value;
   if (!target) return;
+  同步球指针();
   const x = currentX();
   const y = currentY();
   if (panelOpen.value) {

@@ -28,15 +28,9 @@ import { 请求并校验 as 共用请求并校验 } from '../共用/模型往返
 import { createTextFilter } from '../共用/楼层标签过滤';
 import { 事件账目, validateAndNormalize } from './世界数据';
 import { 解析世界载荷 } from './解析';
+import { 建立世界时间约束 } from './时间校验';
 
 let isUpdating = false;
-
-const TIME_JUMP_PATTERN = /(一夜之间|第二天一早|第二天|次日|隔天|几天后|数天后|十几天后|一两周后|两周后|几周后|数周后|几个星期后|几个礼拜后|一个月后|两个月后|数月后|几个月后|半年后|一年后|两年后|几年后|数年后|多年后|若干年后)/;
-
-function detectTimeJump(text: string): string | null {
-  const match = text.match(TIME_JUMP_PATTERN);
-  return match ? match[0] : null;
-}
 
 // ---------------------------------------------------------------------------
 // 楼层读取
@@ -157,7 +151,9 @@ export async function updateWorld(force = false): Promise<void> {
     const reply = recent
       .map((message, index) => `【${index === recent.length - 1 ? '最新回复' : `较早回复 ${index + 1}`}】\n${filter(message.message)}`)
       .join('\n\n');
-    const timeJump = detectTimeJump(reply);
+    const latestReply = filter(recent[recent.length - 1].message);
+    const 时间约束 = 建立世界时间约束(latestReply, data.世界.时间);
+    const timeJump = 时间约束.跳跃;
     const replyIds = new Set(recent.map(message => message.message_id));
     // 「最近剧情」上下文只取最新 1 层用户输入
     const context = buildLatestUserInput(recent[recent.length - 1].message_id, filter, replyIds, force ? 0 : clearLayer);
@@ -167,12 +163,13 @@ export async function updateWorld(force = false): Promise<void> {
           includeGlobal: settings.运转.读取全局世界书,
         })
       : '';
-    const messages = buildTickMessages({ world: data, reply, replyCount: recent.length, context, timeJump, worldbook, playerName, playerDesc, 破限: settings.运转.破限, 头部填充: settings.运转.头部填充, 头部填充文本: settings.运转.头部填充文本 ?? '', 防截断: settings.运转.防截断, 预填充: settings.运转.预填充, 节令历法: settings.运转.节令历法, 世界指标: settings.运转.世界指标 });
+    const messages = buildTickMessages({ world: data, reply, replyCount: recent.length, context, timeJump, 时间约束: 时间约束.提示, worldbook, playerName, playerDesc, 破限: settings.运转.破限, 头部填充: settings.运转.头部填充, 头部填充文本: settings.运转.头部填充文本 ?? '', 防截断: settings.运转.防截断, 预填充: settings.运转.预填充, 节令历法: settings.运转.节令历法, 世界指标: settings.运转.世界指标 });
     debugStore.record({
       time: Date.now(),
       model: settings.接口.模型,
       replyIds: recent.map(message => message.message_id),
       replyPreview: reply.slice(0, 150),
+      timeConstraint: 时间约束.提示,
       request: messages
         .map(message => `【${message.role === 'system' ? '系统指令' : message.role === 'user' ? '用户' : '助手'}】\n${message.content}`)
         .join('\n\n────────\n\n'),
@@ -197,7 +194,7 @@ export async function updateWorld(force = false): Promise<void> {
         错.name = 结果.截断 ? '截断' : '解析';
         throw 错;
       },
-      校验: 候选 => validateAndNormalize(候选, data),
+      校验: 候选 => validateAndNormalize(候选, data, 时间约束),
       取JSON片段: content => 解析世界载荷(content).片段,
       // 烟火的口径: "整段不是 JSON" 当场抛出(重试同样的提示词没用), 只有"是 JSON 但结构不合格"才回喂重试;
       // 唯一例外是输出被接口截断——那是"有输出、只是残缺", 归"反馈"让它带着理由重推一次

@@ -6,6 +6,7 @@ import {
   EVENT_LIMIT,
 } from './state';
 import { 内容字段键, 取层, 占位词, 沿用条目, 规范化条目 } from './世界字段表';
+import { 校验世界时间, type 世界时间约束 } from './时间校验';
 
 /**
  * 「世界数据规矩」: 旧世界 + AI 载荷 → 新世界 的全部领域规则。
@@ -111,7 +112,7 @@ export function normalizeLayer(raw: unknown, old: Record<string, any>, limit: nu
  * 校验并规范化 AI 输出的世界推进 JSON: 结构性错误(缺世界/缺时间/事件势力类型不对)抛错重试;
  * 单条事件的字段缺失只警告并用默认值兜底。
  */
-export function validateAndNormalize(parsed: any, oldData: WorldData): WorldData {
+export function validateAndNormalize(parsed: any, oldData: WorldData, 时间约束?: 世界时间约束): WorldData {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw Error('AI 返回的 JSON 结构不符合预期(顶层不是对象)');
   }
@@ -123,6 +124,7 @@ export function validateAndNormalize(parsed: any, oldData: WorldData): WorldData
   if (!时间) {
     throw Error('「世界.时间」为空——必须推进当前时间(正文没有时间线索时按上次世界时间合理顺延), 请重新输出');
   }
+  if (时间约束) 校验世界时间(时间, 时间约束);
   if (!Array.isArray(parsed['事件'])) {
     throw Error('「事件」必须是数组(没有事件时返回空数组 []), 请重新输出');
   }

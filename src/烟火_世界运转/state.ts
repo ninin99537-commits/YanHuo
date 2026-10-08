@@ -60,6 +60,8 @@ export interface DebugLog {
   model: string;
   replyIds: number[];
   replyPreview: string;
+  /** 本轮正文时间约束, 便于日志确认烟火为何允许/拒绝某个日期 */
+  timeConstraint?: string;
   addedEvents: string[];
   updatedEvents: string[];
   removedEvents: string[];

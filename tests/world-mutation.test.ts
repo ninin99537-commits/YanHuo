@@ -46,14 +46,15 @@ function ok(label: string, cond: boolean) {
 
 /** 假环境: 只记账, 不碰酒馆 */
 function 假环境(注入世界书条目 = true) {
-  const 记 = { 保存: [] as WorldData[], 清空次数: 0, 同步: [] as { 数据: WorldData; 写入: boolean }[] };
+  const 记 = { 保存: [] as WorldData[], 清空次数: 0, 同步: [] as { 数据: WorldData; 写入: boolean }[], 提醒: [] as string[] };
   return {
     记,
     环境: {
       注入世界书条目,
-      保存: (数据: WorldData) => { 记.保存.push(数据); },
+      保存: (数据: WorldData) => { 记.保存.push(数据); return true; },
       清空: () => { 记.清空次数++; },
       同步世界书: (数据: WorldData, 写入: boolean) => { 记.同步.push({ 数据, 写入 }); },
+      提醒: (文本: string) => { 记.提醒.push(文本); },
     },
   };
 }
@@ -321,6 +322,29 @@ console.log('\n[17] 界面不再就地改数据(改数据的路只有门这一�
   ok('界面引用了那道门', vueSource.includes("from './世界数据变更'"));
   ok('界面用建世界数据环境()取环境', vueSource.includes('建世界数据环境()'));
   ok('事件编辑框按 id 认, 不按对象引用', !vueSource.includes('editingEvent === event') && vueSource.includes('同一条事件(editingEvent, event)'));
+}
+
+console.log('\n[18] 快照没落进楼层 → 要如实提醒, 不能报成功');
+{
+  const 记提醒: string[] = [];
+  const 环境 = {
+    注入世界书条目: true,
+    保存: () => false,
+    清空: () => {},
+    同步世界书: () => {},
+    提醒: (文本: string) => 记提醒.push(文本),
+  };
+  const 结果 = 保存世界条目(旧世界(), '地域', '', { 名称: '某城' }, 环境 as any);
+  ok('改动本身仍然生效', Boolean(结果.数据.地域.某城));
+  check('提醒了一次', 记提醒.length, 1);
+  ok('提醒里说明了没落盘', 记提醒[0].includes('没能写进楼层'));
+}
+
+console.log('\n[19] 落盘成功 → 不打扰用户');
+{
+  const 假 = 假环境();
+  保存世界条目(旧世界(), '地域', '', { 名称: '某城' }, 假.环境);
+  check('没有多余提醒', 假.记.提醒.length, 0);
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);

@@ -20,8 +20,9 @@ export async function 收集本轮输入(参数: 取料参数) {
     // 获取玩家/主角名, 避免给主角建档; 顺带清理历史误建的主角卡
     const playerName = host.persona.name();
     // 主角信息(persona 描述): 主 AI 能看到 persona, 彼方此前没有读取渠道——
-    // 主角设定不写在世界书里时, 更新 AI 完全不知道主角是谁, 这里补齐
-    const playerDescription = host.persona.description().trim().slice(0, 4000);
+    // 主角设定不写在世界书里时, 更新 AI 完全不知道主角是谁, 这里补齐。
+    // 零截断原则: 全量发送, 不在发送时砍内容(规模控制只做在源头的读取范围/账本容量)。
+    const playerDescription = host.persona.description().trim();
     if (playerName && data.NPC[playerName]) {
         delete data.NPC[playerName];
         data.名单 = data.名单.filter(name => name !== playerName);
@@ -127,8 +128,8 @@ export async function 收集本轮输入(参数: 取料参数) {
             try {
                 const personaText = await getPersonaTextForNpc(name, alias, settings.更新.注入世界书排除 ?? []);
                 if (personaText && personaText.trim()) {
-                    // 截断到 1500 字: 防止人设条目超长挤占输出 token
-                    card['人设参考'] = personaText.trim().slice(0, 1500);
+                    // 零截断原则: 全量发送, 不再截断到 1500 字(规模控制只做在源头的读取范围/条目排除)。
+                    card['人设参考'] = personaText.trim();
                 }
             }
             catch (error) {
@@ -136,7 +137,7 @@ export async function 收集本轮输入(参数: 取料参数) {
             }
         }
     }
-    const { messages, 锚点 } = buildUpdateMessages({
+    const { messages } = buildUpdateMessages({
         reply,
         replyCount: recent.length,
         context,
@@ -168,5 +169,5 @@ export async function 收集本轮输入(参数: 取料参数) {
     });
     console.info(`[彼方] 开始更新幕后NPC状态 (使用最近 ${recent.length} 条回复: #${recent.map(message => message.message_id).join(', #')})`);
 
-    return { 锚点, data, messages, playerName, recent, timeJump };
+    return { data, messages, playerName, recent, timeJump };
 }

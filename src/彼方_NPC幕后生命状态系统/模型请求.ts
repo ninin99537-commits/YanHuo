@@ -1,8 +1,8 @@
 // 从模型那里拿到"合要求的 JSON"这一步(候选2 拆出来的第一步)。
 // 这一段以前塞在 updateNpcStates 里, 和"取料/应用/收尾"共用一个 try; 现在它自己一个模块:
 // 发请求 → 解析 → 校验, 不合格就带着错误原因重试(最多 3 次)。两类失败分开对待:
-//  - 接口出错(网络/网关/超时/政策拦): 没有有效输出可回喂, 只等更久(2 秒 × 第几次)后重试;
-//  - 解析/校验失败: 把上次输出里的 JSON 片段连同错误原因回喂给 AI, 让它自己改(等 0.6 秒后重试)。
+//  - 接口出错(网络/网关/超时/政策拦): 只等更久(2 秒 × 第几次)后重试;
+//  - 解析/校验失败: 原样重发同一份提示词再试(等 0.6 秒后重试, 最多 3 次)。
 // 发请求、写日志、报进度都由调用方传进来, 所以这一整套重试协议不装酒馆也能单独跑。
 // 依赖按实际用到的符号具名导入/默认导入(形态守卫见 tests/no-bundle-artifacts.test.ts)。
 // json5 走默认导入: 原先是从命名空间取 ["default"], 默认导入编译出的取值路径与它完全一致。
@@ -188,20 +188,6 @@ function stripThinkingFields(text) {
     }
     return result;
 }
-/** 从 AI 原始输出中提取 JSON 部分(去思维链/正文等杂质), 供重试时回喂给 AI 指明格式错误 */
-function extractJsonSnippet(content) {
-    let text = String(content || '').trim();
-    const fence = text.match(/^```(?:json|yaml)?\s*([\s\S]*?)\s*```$/);
-    if (fence)
-        text = fence[1].trim();
-    const firstBrace = text.indexOf('{');
-    const lastBrace = text.lastIndexOf('}');
-    if (firstBrace === -1 || lastBrace <= firstBrace)
-        return '';
-    // 剥离思考字段: 思考超长(数十KB)会挤掉真正需要回喂的格式错误信息
-    const snippet = stripThinkingFields(text.slice(firstBrace, lastBrace + 1));
-    return snippet.trim() || text.slice(firstBrace, lastBrace + 1);
-}
 /** 顶层保留键(非 NPC 名字): 元数据/思考字段/旧格式分组键, 不参与状态卡合并与校验 */
 function isReservedTopLevelKey(name) {
     return name === '在场NPC' || name === '后台互动' || name === '移除NPC'
@@ -288,8 +274,6 @@ function validateParsedFormat(parsed, existingCards = {}, skipCheckNames = null)
 type 请求参数 = {
     /** 基础消息(不含错误反馈); 反馈只追加到"任务 user 消息"上, 不动尾部 */
     messages: any[];
-    /** 任务 user 消息在 messages 里的位置(提示词形状自己声明的锚点) */
-    锚点: { 任务下标: number };
     /** 设置里的"预填充": 末位补一条 assistant '{' 引导模型直接从 JSON 开始 */
     预填充: boolean;
     /** 校验用: 已有的 NPC 卡(用来判断哪些名字算新角色) */
@@ -309,12 +293,11 @@ type 请求参数 = {
     报进度: (文字: string) => void;
 };
 /** 彼方这一侧要告诉共用模块的只有"怎么解析、怎么校验、文案叫什么";
- *  重试节奏、回喂文案、预填充拼回这些两边一样的部分都在 共用/模型往返.ts 里。 */
+ *  重试节奏、预填充拼回这些三边一样的部分都在 共用/模型往返.ts 里。 */
 async function 请求并校验(params: 请求参数): Promise<{ parsed: any; 请求耗时: number; 请求次数: number }> {
     const { 现有卡, 名单, 玩家名, 自动建档 } = params;
     return await 共用请求并校验({
         messages: params.messages,
-        锚点: params.锚点,
         预填充: params.预填充,
         signal: params.signal,
         发请求: params.发请求,
@@ -355,7 +338,6 @@ async function 请求并校验(params: 请求参数): Promise<{ parsed: any; 请
             validateParsedFormat(parsed, 现有卡 ?? {}, skipCheckNames);
             return parsed;
         },
-        取JSON片段: content => extractJsonSnippet(content),
         名字: '彼方',
         结构失败标签: '更新失败',
         中断文案: '用户已中断本次更新',

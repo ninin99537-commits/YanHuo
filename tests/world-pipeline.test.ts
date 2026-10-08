@@ -3,7 +3,7 @@
 // 烟火这条流程以前一条用例都没有: 它要聊天楼层、变量表、世界书、模型接口四样东西齐备才能跑。
 // 现在平台调用已经收进 host.ts(与彼方同一个形状), 测试里塞一个假宿主就能端到端驱动它:
 //   成功一轮 → 世界时间/小结/事件落进状态与新楼层快照;
-//   模型第一次输出坏 JSON → 带着错误原因重试一次就成功(第二次请求里能看到回喂);
+//   模型第一次输出坏 JSON → 原样重试一次就成功(第二次请求里不再有回喂);
 //   三次都坏 → 报错, 且"处理到楼层"与旧数据一个字段都不许动;
 //   接口没配置 / 没有可分析的回复 → 提前退出, 一次模型都不调;
 //   读取世界书 + 注入世界书条目 → 世界书真的被读、条目真的被写(经接缝)。
@@ -251,15 +251,16 @@ console.log('\n[1] 成功一轮: 世界时间/小结/事件落到状态与新楼
 /** 是合法 JSON、但结构不合格(「世界.时间」为空): 校验这一关会拒掉它 */
 const 结构不合格 = JSON.stringify({ 世界: { 时间: '' }, 事件: [], 小结: '坏输出标记' });
 
-console.log('\n[2] 结构不合格一次 → 带着错误原因重试一次就成功');
+console.log('\n[2] 结构不合格一次 → 原样重试一次就成功');
 {
   const p = await 准备({ 生成序列: [结构不合格, 正常输出] });
   await updateWorld(true);
 
   check('模型被调了两次', p.记录.raw.length, 2);
-  ok('第二次请求里回喂了「上次输出不符合要求」', JSON.stringify(p.记录.raw[1]).includes('上次输出不符合要求'));
-  ok('第二次请求里说明了错在哪', JSON.stringify(p.记录.raw[1]).includes('「世界.时间」'));
-  ok('第二次请求里带上了上次输出的 JSON 片段', JSON.stringify(p.记录.raw[1]).includes('坏输出标记'));
+  ok('第二次请求里不再回喂「上次输出不符合要求」', !JSON.stringify(p.记录.raw[1]).includes('上次输出不符合要求'));
+  ok('也不再回喂上次的坏输出片段', !JSON.stringify(p.记录.raw[1]).includes('坏输出标记'));
+  ok('第二次请求与第一次完全一样(原样重发; 只有每次自动生成的 generation_id 不同)',
+    JSON.stringify(p.记录.raw[1]).replace(/"generation_id":"[^"]*"/g, '') === JSON.stringify(p.记录.raw[0]).replace(/"generation_id":"[^"]*"/g, ''));
   check('重试后数据是对的', 取状态().小结, '集市散场, 小镇归于安静');
 }
 
@@ -271,6 +272,26 @@ console.log('\n[2b] 模型输出根本不是 JSON → 当场失败, 不重试(�
   check('只调了一次, 没有重试', p.记录.raw.length, 1);
   ok('日志页记下了失败', JSON.stringify(取日志()).includes('世界推进失败'));
   check('数据没动', 取状态().处理到楼层, 0);
+}
+
+console.log('\n[2c] 输出被接口砍断(左括号比右括号多) → 原样重推一次(2026-10-01 真机上遇到的截断)');
+{
+  // 从中间往后找一个"切下去确实不配平"的位置, 保证样本就是截断的样子
+  const 不配平 = (t: string) => (t.match(/\{/g) ?? []).length > (t.match(/\}/g) ?? []).length;
+  let 切到 = Math.floor(正常输出.length / 2);
+  while (切到 < 正常输出.length && !不配平(正常输出.slice(0, 切到)))
+    切到++;
+  const 截断输出 = 正常输出.slice(0, 切到);
+  ok('截断样本确实不配平(前提)', 不配平(截断输出));
+  const p = await 准备({ 生成序列: [截断输出, 正常输出] });
+  await updateWorld(true);
+
+  check('模型被调了两次(截断不再当场失败)', p.记录.raw.length, 2);
+  ok('重推时不再回喂「上次输出不符合要求」', !JSON.stringify(p.记录.raw[1]).includes('上次输出不符合要求'));
+  ok('也不再带上"能切出来的那半截"', !JSON.stringify(p.记录.raw[1]).includes('夜色渐深'));
+  ok('重推的请求与第一次完全一样(原样重发; 只有每次自动生成的 generation_id 不同)',
+    JSON.stringify(p.记录.raw[1]).replace(/"generation_id":"[^"]*"/g, '') === JSON.stringify(p.记录.raw[0]).replace(/"generation_id":"[^"]*"/g, ''));
+  check('重试后数据是对的', 取状态().小结, '集市散场, 小镇归于安静');
 }
 
 console.log('\n[3] 结构连着三次不合格 → 报错, 数据一个字段都不许动');

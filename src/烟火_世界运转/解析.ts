@@ -338,30 +338,15 @@ function parseModelResponse(content: string): any {
   );
 }
 
-/** 从 AI 原始输出中提取 JSON 部分(去思维链/正文等杂质), 供重试时回喂给 AI 指明格式错误 */
-function extractJsonSnippet(content: string): string {
-  let text = String(content || '').trim();
-  const fence = text.match(/^```(?:json|yaml)?\s*([\s\S]*?)\s*```$/);
-  if (fence) text = fence[1].trim();
-  const candidate = sliceBalancedCandidates(text)[0];
-  if (!candidate) return '';
-  // 思考字段可能超长, 回喂给 AI 前先剥离, 免得挤掉真正的格式错误信息
-  return stripThinkingFields(candidate).trim() || candidate;
-}
-
 // ---------------------------------------------------------------------------
 // 对外入口: 原始文本 → 世界载荷
 // ---------------------------------------------------------------------------
 
 export type 解析结果 =
-  | { 成功: true; 载荷: any; 片段: string }
-  | { 成功: false; 原因: string; 片段: string; 截断: boolean };
+  | { 成功: true; 载荷: any }
+  | { 成功: false; 原因: string; 截断: boolean };
 
-/** 唯一入口。解析成功给载荷; 失败给原因(原文案原样)与回喂用的 JSON 片段。
- *
- *  片段两条分支都给, 是因为老调用方(update.ts 的 取JSON片段)在"解析成功但结构校验不过"
- *  那条重试路径上也要回喂片段, 口径就是原来的 extractJsonSnippet(先切围栏、取首个配平候选、
- *  剥掉思考字段); 所以这里先无条件按老口径切一份, 与成败无关。
+/** 唯一入口。解析成功给载荷; 失败给原因(原文案原样)。
  *
  *  截断 = 文本里 '{' 比 '}' 多 —— 输出在半路被切了(未闭合的那个可能是最外层的, 内层早已闭合,
  *  所以只能数括号, 不能比"最后一个 {' 和最后一个 }"的位置)。
@@ -370,12 +355,11 @@ export type 解析结果 =
  *  只在解析失败这条路上算: 真解析成功了就不看它; 失败时多余的 '{' 就是截断的强证据,
  *  万一误判, 代价也只是把这次当接口问题原样重推一遍, 不会改坏数据。 */
 export function 解析世界载荷(原始文本: string): 解析结果 {
-  const 片段 = extractJsonSnippet(原始文本);
   try {
-    return { 成功: true, 载荷: parseModelResponse(原始文本), 片段 };
+    return { 成功: true, 载荷: parseModelResponse(原始文本) };
   } catch (error) {
     const 截断 = (原始文本.match(/\{/g) ?? []).length > (原始文本.match(/\}/g) ?? []).length;
-    return { 成功: false, 原因: error instanceof Error ? error.message : String(error), 片段, 截断 };
+    return { 成功: false, 原因: error instanceof Error ? error.message : String(error), 截断 };
   }
 }
 
@@ -392,6 +376,5 @@ export function 解析世界载荷(原始文本: string): 解析结果 {
 //  2. 候选挑选: 本文件先切出全部候选、再逐个(多变体 / 双解析器)挑「世界推进」载荷, 全部不像时
 //     退而取第一个能解析的对象(fallback); 彼方是边切边按文本里是否含 '"剧情时间"' 判定,
 //     没有 fallback。
-//  3. 回喂片段: 本文件取"首个配平候选", 彼方取"第一个 { 到最后一个 }"(粗切)。
-//  4. 报错文案与截断长度不同(本文件 300/400 字, 彼方 400/600 字), 且彼方失败时会打一条
+//  3. 报错文案与截断长度不同(本文件 300/400 字, 彼方 400/600 字), 且彼方失败时会打一条
 //     console.warn(本文件没有任何 console 输出)。

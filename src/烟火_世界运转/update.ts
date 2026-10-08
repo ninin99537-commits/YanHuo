@@ -76,18 +76,6 @@ function buildLatestUserInput(replyMessageId: number, filter: (text: string) => 
 // 主流程: 推进世界
 // ---------------------------------------------------------------------------
 
-/** 任务 user 消息 = 最后一条 user, 但跳过破限+预填充关闭时烟火自己追加的收尾 user */
-function 查任务消息下标(messages: { role: string; content: string }[]): number {
-  const isTailKickoff = (message: { role: string; content: string }, idx: number) =>
-    idx === messages.length - 1 && message.role === 'user' && message.content === '现在, 按上述全部规则开始执行任务。';
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role !== 'user') continue;
-    if (isTailKickoff(messages[i], i)) continue;
-    return i;
-  }
-  return -1;
-}
-
 export async function updateWorld(force = false): Promise<void> {
   if (isUpdating) {
     console.warn('[烟火] 上一次推进尚未完成, 已跳过本次推进');
@@ -175,12 +163,11 @@ export async function updateWorld(force = false): Promise<void> {
         .join('\n\n────────\n\n'),
     });
     console.info(`[烟火] 开始推进世界 (使用最近 ${recent.length} 条回复: #${recent.map(message => message.message_id).join(', #')})`);
-    // 发请求 → 解析 → 校验 → 不合格就带着错误原因重试: 这一段与彼方共用(候选5),
-    // 节奏/回喂文案/预填充拼回都在 共用/模型往返.ts 里, 这里只交代烟火自己的四件事:
+    // 发请求 → 解析 → 校验 → 不合格就原样重试: 这一段与彼方/导演共用,
+    // 节奏/预填充拼回都在 共用/模型往返.ts 里, 这里只交代烟火自己的四件事:
     // 解析怎么切 JSON、校验用什么(schema 规范化)、错误怎么归类、文案叫什么。
     const 往返 = await 共用请求并校验({
       messages,
-      找任务下标: 查任务消息下标,
       预填充: settings.运转.预填充,
       signal: abortSignal,
       发请求: chatCompletion,
@@ -195,10 +182,8 @@ export async function updateWorld(force = false): Promise<void> {
         throw 错;
       },
       校验: 候选 => validateAndNormalize(候选, data, 时间约束),
-      取JSON片段: content => 解析世界载荷(content).片段,
-      // 烟火的口径: "整段不是 JSON" 当场抛出(重试同样的提示词没用), 只有"是 JSON 但结构不合格"才回喂重试;
-      // 唯一例外是输出被接口截断——那是"有输出、只是残缺", 归"反馈"让它带着理由重推一次
-      // (截断的片段本来就是空的, 回喂里只有一句"JSON 不完整", 不会把半截 JSON 塞回去)。
+      // 烟火的口径: "整段不是 JSON" 当场抛出(重试同样的提示词没用), 只有"是 JSON 但结构不合格"才原样重试;
+      // 唯一例外是输出被接口截断——那是"有输出、只是残缺", 归"反馈"让它原样重推一次。
       判断错误: (error, 阶段) => {
         parseError = error;
         if (阶段 === '解析') return error.name === '截断' ? '反馈' : '致命';

@@ -5,19 +5,8 @@ import { 渲染台账 } from './事务台账';
 
 /** 一条消息(发出去的形状) */
 type 提示词段 = { role: 'system' | 'user' | 'assistant'; content: string };
-/**
- * 提示词形状的锚点: 告诉调用方"任务消息在哪一条"。
- * 为什么要它: update.ts 的重试循环要把上次的错误反馈接到**任务**那条上, 以前靠硬编码收尾文案
- * 反推位置——开关组合一变(破限/预填充的四种搭配)就可能接错地方。预填充不需要锚点:
- * 它接在数组末尾, 那条是 user 还是 assistant 直接看得到。
- */
-interface 提示词锚点 {
-    /** "任务"那条 user 消息的下标(错误反馈接在它上面) */
-    任务下标: number;
-}
 interface 提示词形状 {
     messages: 提示词段[];
-    锚点: 提示词锚点;
 }
 
 /** 系统提示词头部(身份句, 不含破限) */
@@ -50,18 +39,6 @@ function 破限尾巴(): 提示词段[] {
         { role: 'system', content: SPECIAL_NOTE },
         { role: 'assistant', content: JAILBREAK_PROMISE },
     ];
-}
-/** 从消息数组算出锚点; 收尾文案只在末尾那条 user 上生效(它就是被追加的收尾, 不是任务) */
-function 算锚点(messages: 提示词段[], 收尾文案: string): 提示词锚点 {
-    for (let i = messages.length - 1; i >= 0; i--) {
-        const message = messages[i];
-        if (message.role !== 'user')
-            continue;
-        if (收尾文案 !== undefined && i === messages.length - 1 && message.content === 收尾文案)
-            continue;
-        return { 任务下标: i };
-    }
-    return { 任务下标: -1 };
 }
 /** 系统提示词主体(全部更新规则, 不含破限): 生理相关段落受「生理监测」开关控制 */
 const SYSTEM_PROMPT_BODY = (physioEnabled = false) => `
@@ -275,7 +252,7 @@ ${JSON.stringify(input.currentCards, null, 2)}
             ]
             : []),
     ];
-    return { messages, 锚点: 算锚点(messages, TAIL_KICKOFF) };
+    return { messages };
 }
 function buildInjectionPrompt(npcEntries) {
     const formatCard = ([name, card]) => {
@@ -331,4 +308,4 @@ function buildInjectionPrompt(npcEntries) {
 }
 
 export { BIFANG_ENTRY_CONTENT_PREFIX, buildInjectionPrompt, buildUpdateMessages };
-export type { 提示词锚点, 提示词段, 提示词形状 };
+export type { 提示词段, 提示词形状 };

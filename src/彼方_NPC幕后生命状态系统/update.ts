@@ -133,13 +133,12 @@ async function updateNpcStates(force = false) {
             },
         });
         if (!输入) return; // 前置条件不满足(如没有可用的 AI 回复): 上面已经提示过用户
-        const { 锚点, data, messages, playerName, recent, timeJump } = 输入;
+        const { data, messages, playerName, recent, timeJump } = 输入;
         let 请求结果;
         try {
-            // 取模型输出这一段已独立成模块(模型请求.ts): 发请求 → 解析 → 校验, 不合格就带着错误原因重试
+            // 取模型输出这一段已独立成模块(模型请求.ts): 发请求 → 解析 → 校验, 不合格就原样重试
             请求结果 = await 请求并校验({
                 messages,
-                锚点,
                 预填充: settings.更新.预填充,
                 现有卡: data.NPC ?? {},
                 名单: data.名单 ?? [],

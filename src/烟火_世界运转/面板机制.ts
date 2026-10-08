@@ -16,6 +16,7 @@ import { UI_KEY } from './state';
 import { setToastAnchor, setToastColors } from './toast';
 import type { 主题模式 } from './主题';
 import { 弹窗兜底配色, 弹窗变量, 层序, 取弹窗配色, 悬浮球直径 } from './主题';
+import { 取收纳坞, 取收纳坞入口 } from '../共用/收纳坞';
 
 /** 球直径只从主题 token 取一处(以前这里手抄 40, 样式表里再抄两个) */
 const CLOSED_SIZE = 悬浮球直径;
@@ -211,11 +212,51 @@ export function 使用面板机制(依赖: 面板机制依赖) {
   const anchorX = ref<number>(-100);
   const anchorY = ref<number>(-100);
 
-  /** 贴球定位的统一取点: **真实矩形优先**, 退回逻辑锚点; 半径一并给出(收纳缩放也跟得上) */
+  /**
+   * 贴球定位的统一取点, 三档优先级:
+   *   ① **被收纳坞收走** → 贴坞里属于本球的那个代理图标。收纳后坞把球**藏起来**(visibility:hidden)
+   *      却**没搬走球 iframe**, 所以贴 iframe 会落在"球原来的位置"。
+   *      图标 28×28 比球 40×40 小, 半径随图标走, 贴球间距自然跟着缩。
+   *   ② 球 iframe 的**真实矩形** → 本插件自己挪球时用它;
+   *   ③ 逻辑锚点兜底(还没上屏 / 量不到)。
+   */
   function 球锚点(): { x: number; y: number; r: number } {
+    const 入口 = 取收纳坞入口(parentWin.value?.document, frame.value);
+    if (入口) {
+      const r = 入口.getBoundingClientRect();
+      if (r.width || r.height) return { x: r.left + r.width / 2, y: r.top + r.height / 2, r: Math.max(r.width, r.height) / 2 };
+    }
     const 实 = 球矩形.value;
     if (实) return { x: 实.cx, y: 实.cy, r: Math.max(实.w, 实.h) / 2 };
     return { x: anchorX.value, y: anchorY.value, r: CLOSED_SIZE / 2 };
+  }
+
+  /** 贴球锚点的**响应式快照**: 弹条 watch 它, 免得各自去调非响应式的 球锚点() */
+  const 贴球锚点 = ref<{ x: number; y: number; r: number }>({ x: -100, y: -100, r: CLOSED_SIZE / 2 });
+
+  /** 坞被拖动/折叠/换锚点时不改变球 iframe, 所以"盯坞"与"盯球"是两条独立通道 */
+  let 坞观察器: MutationObserver | null = null;
+  function 盯住收纳坞(): void {
+    if (坞观察器 || typeof MutationObserver === 'undefined') return;
+    const 坞 = 取收纳坞(parentWin.value?.document);
+    if (!坞) return;
+    坞观察器 = new MutationObserver(() => 同步贴球锚点());
+    坞观察器.observe(坞, { attributes: true, attributeFilter: ['style', 'class'], childList: true, subtree: true });
+  }
+
+  /**
+   * 同步"贴球锚点"到 toast 与推进中弹条。
+   * **不能只在球动了时才同步**: 坞拖动/折叠/释放时球 iframe 一动不动, 锚点却变了 —— 所以按锚点值判重。
+   */
+  function 同步贴球锚点(强制 = false): void {
+    盯住收纳坞();
+    量球();
+    const 锚 = 球锚点();
+    const 旧 = 贴球锚点.value;
+    if (!强制 && Math.abs(旧.x - 锚.x) < 0.5 && Math.abs(旧.y - 锚.y) < 0.5 && Math.abs(旧.r - 锚.r) < 0.5) return;
+    贴球锚点.value = 锚;
+    setToastAnchor(锚.x, 锚.y);
+    if (pillEl.value) positionUpdatePill();
   }
   /** 面板位置(null=默认居中); 面板宽高由 CSS 决定 */
   const panelPos = ref<{ x: number; y: number } | null>(null);
@@ -439,12 +480,8 @@ export function 使用面板机制(依赖: 面板机制依赖) {
     }
     const w = el.offsetWidth || 160;
     const h = el.offsetHeight || 32;
-    // **真实矩形优先**: 收纳类插件直接搬 iframe 本体, 逻辑球位会脱节(见 球矩形)。
-    // 半径一并从真实矩形取, 于是收纳若同时缩放了球, 贴球间距也跟着变。
-    const 实 = 球矩形.value;
-    const 心x = 实 ? 实.cx : anchorX.value;
-    const 心y = 实 ? 实.cy : anchorY.value;
-    const 半径 = 实 ? Math.max(实.w, 实.h) / 2 : CLOSED_SIZE / 2;
+    // 锚点由 球锚点 统一解析: 被收纳时=坞图标(28×28, 半径更小), 否则=球 iframe 真实矩形
+    const { x: 心x, y: 心y, r: 半径 } = 贴球锚点.value;
     let left = 心x - 半径 - w - 10;
     if (left < 8) left = 心x + 半径 + 10;
     left = clamp(left, 8, Math.max(8, vw - w - 8));
@@ -492,14 +529,9 @@ export function 使用面板机制(依赖: 面板机制依赖) {
   watch(依赖.推进文案, msg => {
     if (pillEl.value) pillEl.value.children[2].textContent = msg || '世界运转中…';
   });
-  // 拖动球时弹条与弹窗跟随(自己挪球: rAF 后真实矩形已跟上, 取真实值; 收纳挪球走 量球 的盯守通道)
+  // 拖动球时弹条与弹窗跟随(自己挪球: rAF 后真实矩形已跟上; 收纳/坞拖动走 同步贴球锚点 的双通道)
   watch([anchorX, anchorY], () => {
-    requestAnimationFrame(() => {
-      量球();
-      if (pillEl.value) positionUpdatePill();
-      const 锚 = 球锚点();
-      setToastAnchor(锚.x, 锚.y);
-    });
+    requestAnimationFrame(() => 同步贴球锚点(true));
   });
   // 面板阴影随面板一起淡入
   watch(panelOpen, open => {
@@ -575,22 +607,14 @@ export function 使用面板机制(依赖: 面板机制依赖) {
     ensurePanelShadow();
     applyFrame();
     applyToastTheme();
-    量球();
-    setToastAnchor(球锚点().x, 球锚点().y);
-    // 收纳类插件直接搬 iframe 本体(改内联 left/top)且不发任何事件 —— 只能自己盯住真实矩形。
-    // 双通道: MutationObserver 抓属性改动(命中即瞬时), 慢轮询只作兜底。
-    const 跟球 = () => {
-      if (!量球()) return;
-      if (pillEl.value) positionUpdatePill();
-      const 锚 = 球锚点();
-      setToastAnchor(锚.x, 锚.y);
-    };
+    同步贴球锚点(true);
+    // 盯球(属性改动, 命中即瞬时) + 盯坞(坞拖动/折叠/释放不动球 iframe) + 慢轮询兜底
     if (!量球观察器 && typeof MutationObserver !== 'undefined') {
-      量球观察器 = new MutationObserver(跟球);
+      量球观察器 = new MutationObserver(() => 同步贴球锚点());
       const 球元素 = frame.value;
       if (球元素) 量球观察器.observe(球元素, { attributes: true, attributeFilter: ['style', 'class'] });
     }
-    if (量球定时器 === null) 量球定时器 = window.setInterval(跟球, 2000);
+    if (量球定时器 === null) 量球定时器 = window.setInterval(() => 同步贴球锚点(), 2000);
     parentWin.value?.addEventListener('resize', onViewportResize);
   });
   onUnmounted(() => {
@@ -599,6 +623,8 @@ export function 使用面板机制(依赖: 面板机制依赖) {
     量球定时器 = null;
     量球观察器?.disconnect();
     量球观察器 = null;
+    坞观察器?.disconnect();
+    坞观察器 = null;
     removePanelShadow();
   });
 

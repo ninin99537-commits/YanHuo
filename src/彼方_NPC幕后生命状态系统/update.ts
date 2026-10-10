@@ -10,6 +10,7 @@ import { toastError, toastInfo, toastSuccess, toastWarning } from './toast';
 import { useHost } from './host';
 import { THINKING_FIELD_KEYS, 请求并校验 } from './模型请求';
 import { applyUpdate, extractCurrentTimeHint, maskBaseUrl } from './应用更新';
+import type { 台账输出 } from './应用更新';
 import { 收集本轮输入 } from './更新输入';
 import { createTextFilter } from '../共用/楼层标签过滤';
 
@@ -160,7 +161,9 @@ async function updateNpcStates(force = false) {
         parsed = 请求结果.parsed;
         const applyStart = Date.now();
         const autoTrack = settings.更新.自动建档 !== false;
-        const newData = applyUpdate(data, parsed, timeJump, playerName, autoTrack);
+        // 台账本轮输出(临时): 未回票编号只在"写世界书"这一步用一次, 不落库(见 台账输出 的类型说明)
+        const 台账本轮: 台账输出 = {};
+        const newData = applyUpdate(data, parsed, timeJump, playerName, autoTrack, 台账本轮);
         const updatedNpcs = [];
         const removedNpcs = [];
         if (parsed && typeof parsed === 'object') {
@@ -224,7 +227,7 @@ async function updateNpcStates(force = false) {
         }
         // 同步幕后状态到角色卡主世界书(蓝灯常驻条目), 供主AI与数据库剧情推进读取
         if (settings.更新.注入世界书条目) {
-            syncNpcStatesWorldbook(host, newData, true).catch(error => {
+            syncNpcStatesWorldbook(host, newData, true, 台账本轮.未回票).catch(error => {
                 console.error('[彼方] 同步世界书条目失败:', error);
             });
         }

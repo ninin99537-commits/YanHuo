@@ -9,6 +9,7 @@
 import JSON5 from 'json5';
 import { CARD_FIELDS } from './卡字段';
 import { PHYSIO_FIELDS } from './生理规则';
+import { 恋爱字段 } from './恋爱规则';
 import { parseStoryTime } from './剧情时间';
 import { 请求并校验 as 共用请求并校验 } from '../共用/模型往返';
 
@@ -18,7 +19,7 @@ const THINKING_FIELD_KEYS = ['静默思考流程', '思考流程', '思考过程
  *  「未完成事项」是事务台账**数组**(空数组也合法, 见 事务台账.ts) */
 const NON_STRING_CARD_FIELDS = ['未完成事项'];
 /** 每张被返回的状态卡都必须包含的普通字符串字段(全部字段, 新建 NPC 建档时使用) */
-const REQUIRED_CARD_FIELDS = CARD_FIELDS.filter(field => !PHYSIO_FIELDS.includes(field) && !NON_STRING_CARD_FIELDS.includes(field));
+const REQUIRED_CARD_FIELDS = CARD_FIELDS.filter(field => !PHYSIO_FIELDS.includes(field) && !恋爱字段.includes(field) && !NON_STRING_CARD_FIELDS.includes(field));
 /** 增量更新下已有 NPC 每次必返的核心字段(其余字段未返回=沿用旧值) */
 const CORE_CARD_FIELDS = ['当前在做', '当前状态', '位置'];
 function parseModelResponse(content) {
@@ -191,7 +192,7 @@ function stripThinkingFields(text) {
 /** 顶层保留键(非 NPC 名字): 元数据/思考字段/旧格式分组键, 不参与状态卡合并与校验 */
 function isReservedTopLevelKey(name) {
     return name === '在场NPC' || name === '后台互动' || name === '移除NPC'
-        || name === '剧情时间' || name === '受孕事件' || name === '人设参考'
+        || name === '剧情时间' || name === '受孕事件' || name === '恋爱事件' || name === '人设参考'
         || THINKING_FIELD_KEYS.includes(name);
 }
 /** 校验 AI 输出的 JSON 结构是否符合预期; 结构错误、"新增 NPC 字段不全"抛错重试, 已有 NPC 缺普通字段只警告(沿用旧值) */

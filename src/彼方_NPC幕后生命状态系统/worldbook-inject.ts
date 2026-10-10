@@ -14,8 +14,12 @@ import { useMainPromptStore } from './日志仓';
  * 平台访问全部走 host.worldbook / host.toast(见 host.ts), 本函数不直接碰酒馆全局——
  * 于是测试里能塞一本假世界书进来, 把"新建 / 更新 / 改名 / 删除 / 没绑世界书"几种情形都跑一遍。
  * 这里保留的是**领域规则**(条目叫什么名、蓝灯常开、防递归、内容怎么渲染), 与平台无关。
+ *
+ * `未回票` 是**逐轮临时**的(来自本轮合并, 不落库): 本轮没被模型过问的进行中编号, 用来给那几条
+ * 加上"（未表态，待确认）"。切聊天时 `handleChatChanged` 会不带它重写世界书 → 标记自然消失,
+ * 语义正确——它描述的只是"这一轮"。
  */
-async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook' | 'toast'>, data, enabled) {
+async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook' | 'toast'>, data, enabled, 未回票?: Record<string, string[]>) {
     try {
         const wbName = host.worldbook.boundNames().primary;
         if (!wbName) {
@@ -28,7 +32,7 @@ async function syncNpcStatesWorldbook(host: Pick<Host, 'worldbook' | 'toast'>, d
             await host.worldbook.remove(wbName, isBifangEntry);
             return;
         }
-        const content = buildInjectionPrompt(npcEntries);
+        const content = buildInjectionPrompt(npcEntries, 未回票);
         // 日志页「彼方写入世界书的内容」记录: 与写入条目的内容完全一致(同一个渲染函数),
         // 主AI 以及任何读取该世界书的环节读到的就是这一段
         useMainPromptStore().record(content);

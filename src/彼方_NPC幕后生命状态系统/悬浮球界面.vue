@@ -219,6 +219,16 @@
                         <template v-else>更新于 {{ fmtTime(selectedNpcCard['最后更新']) }}</template>
                       </div>
                       <div class="bf-detail-actions">
+                        <button
+                          v-if="!editingNpc"
+                          class="bf-btn bf-btn-mini"
+                          :class="{ 'bf-btn-primary': 是恋爱对象 }"
+                          :disabled="updating"
+                          :title="是恋爱对象 ? '取消恋爱对象标记(此后不再折算恋爱事件)' : '标记为恋爱对象(此后每轮幕后更新折算恋爱事件)'"
+                          @click="切换恋爱对象"
+                        >
+                          <PhHeart :size="13" :weight="是恋爱对象 ? 'fill' : 'bold'" />{{ 是恋爱对象 ? '取消恋爱对象' : '标记恋爱对象' }}
+                        </button>
                         <button v-if="!editingNpc" class="bf-btn bf-btn-mini" @click="startEditNpc"><PhPencilSimple :size="13" weight="bold" />编辑</button>
                         <template v-else>
                           <button class="bf-btn bf-btn-mini bf-btn-primary" @click="saveEditNpc"><PhCheck :size="13" weight="bold" />保存</button>
@@ -273,7 +283,8 @@
                     <!-- 事务台账: 「未完成事项」是数组(见 事务台账.ts), 不是字符串——单独成区块按台账渲染,
                          不能塞进下面的通用字段网格(那会把数组插值成一串 JSON)。一条一行: 编号/时间/内容/状态/结果,
                          进行中在前且醒目、已完成/已作废压暗; 改状态与结果立刻走 数据变更.ts 的 改事务状态 落进快照 -->
-                    <div v-if="台账条目.length > 0 || editingNpc" class="bf-ledger">
+                    <!-- 空台账也要显示这一块: 否则"手动新增第一条"没有入口(下面那行输入框就是入口) -->
+                    <div v-if="selectedNpc || 台账条目.length > 0 || editingNpc" class="bf-ledger">
                       <div class="bf-ledger-head">
                         <span class="bf-ledger-title"><PhHandshake :size="13" weight="duotone" /> 未完成事项 · 事务台账</span>
                         <span class="bf-ledger-hint">内容写下即冻结; 改状态/结果即时生效(不必点「编辑」)</span>
@@ -297,7 +308,7 @@
                             <input
                               v-model="结果草稿[事务.编号]"
                               class="bf-input bf-ledger-result"
-                              :placeholder="事务.结果 ? '改写结果(提交即覆盖)' : '结果(可选)'"
+                              :placeholder="事务.结果 ? '改写结果/作废原因(提交即覆盖)' : '结果/作废原因(可选; 与 AI 写的同格式)'"
                               :disabled="updating"
                             />
                             <div class="bf-seg bf-ledger-seg">
@@ -316,6 +327,25 @@
                           </div>
                         </div>
                       </div>
+                      <!-- 手动新增一条: 玩家侧的"另开新条"(改内容的唯一正路是作废旧条 + 另开新条,
+                           此前这一半只有 AI 走得通)。编号与时间由代码分配, 内容写下即冻结 -->
+                      <div class="bf-ledger-add">
+                        <input
+                          v-model="新增事务草稿"
+                          class="bf-input bf-ledger-add-input"
+                          placeholder="手动新增一条事务(写内容即可; 编号与时间由彼方分配)"
+                          :disabled="updating"
+                          @keyup.enter="新增一条事务()"
+                        />
+                        <button
+                          class="bf-btn bf-btn-mini"
+                          :disabled="updating || !新增事务草稿.trim()"
+                          title="新增一条事务(内容写下即冻结)"
+                          @click="新增一条事务()"
+                        >
+                          新增
+                        </button>
+                      </div>
                     </div>
 
                     <!-- 分组字段 -->
@@ -325,8 +355,18 @@
                         <div class="bf-field-grid">
                           <div v-for="field in 组.字段" :key="field" v-show="selectedNpcCard[field] || editingNpc" class="bf-field">
                             <span class="bf-field-label" :title="字段说明表[field] || field">{{ field }}</span>
+                            <!-- 枚举字段用下拉(词表来自 恋爱规则.ts), 免得手打错字被代码丢弃 -->
+                            <select
+                              v-if="editingNpc && (field === '情感倾向' || field === '名分')"
+                              v-model="editDraft[field]"
+                              class="bf-input"
+                            >
+                              <option v-if="field === '情感倾向'" value="" disabled>（未设置）</option>
+                              <option v-else value="">（无 / 清空）</option>
+                              <option v-for="选项 in (field === '情感倾向' ? 情感倾向选项 : 名分词表)" :key="选项" :value="选项">{{ 选项 }}</option>
+                            </select>
                             <textarea
-                              v-if="editingNpc"
+                              v-else-if="editingNpc"
                               v-model="editDraft[field]"
                               class="bf-textarea bf-textarea-short"
                               rows="2"
@@ -763,6 +803,7 @@ import {
   PhGauge,
   PhGearSix,
   PhHandshake,
+  PhHeart,
   PhHeartStraight,
   PhMapPin,
   PhMoon,
@@ -789,11 +830,12 @@ import { useSettingsStore } from './settings';
 import { useStateStore } from './数据仓';
 import { useConsoleStore, useDebugStore, useMainPromptStore } from './日志仓';
 import { useUpdatingStore } from './任务中断';
-import { 加NPC, 移除NPC, 更新状态卡, 改事务状态, 清空彼方数据, 建变更环境 } from './数据变更';
+import { 加NPC, 移除NPC, 更新状态卡, 改事务状态, 新增事务, 清空彼方数据, 建变更环境 } from './数据变更';
 import { 字段分组表, 字段说明表, 建档字段 } from './卡字段';
 import type { NpcStateCard } from './卡字段';
 import { 台账字段, 台账状态表, 显示台账, 状态类 } from './台账操作';
 import type { 事务状态, 幕后事务 } from './事务台账';
+import { 情感倾向表, 名分词表 } from './恋爱规则';
 import { updateNpcStates } from './update';
 import { syncNpcStatesWorldbook } from './worldbook-inject';
 import { setToastAnchor, setToastColors, toastError, toastInfo, toastSuccess, toastWarning } from './toast';
@@ -1128,6 +1170,25 @@ function 改事务(事务: 幕后事务, 新状态: 事务状态) {
   toastSuccess(结果.说明);
 }
 
+/** 手动新增一条事务的输入草稿(提交成功后清空) */
+const 新增事务草稿 = ref('');
+
+/** 手动新增一条事务: 编号/时间由代码分配(与 AI 路径同一个 合并台账)。
+ *  没新增成(内容与账上重复/内容为空)时 新增事务 会把原数据对象原样返回——据此提示, 不假装成功。 */
+function 新增一条事务() {
+  if (!selectedNpc.value) return;
+  const 文本 = 新增事务草稿.value.trim();
+  if (!文本) return;
+  const 结果 = 新增事务(data.value, selectedNpc.value, 文本, 建变更环境());
+  if (结果.数据 === data.value) {
+    toastWarning(结果.说明);
+    return;
+  }
+  data.value = 结果.数据;
+  新增事务草稿.value = '';
+  toastSuccess(结果.说明);
+}
+
 function saveEditNpc() {
   if (!selectedNpc.value || !data.value.NPC?.[selectedNpc.value]) return;
   const 名字 = selectedNpc.value;
@@ -1165,6 +1226,7 @@ const 分组展示 = [
   { key: '生活', 标题: '生活动态', 图标: PhSuitcaseSimple },
   { key: '内心', 标题: '内心世界', 图标: PhBrain },
   { key: '生理', 标题: '生理状态', 图标: PhHeartStraight },
+  { key: '恋爱', 标题: '恋爱', 图标: PhHeart },
 ];
 
 /** NPC 详情字段分组: 分组标题与图标是展示(留在这里), "哪个字段属于哪一组"来自 卡字段.ts 的字段表。
@@ -1177,6 +1239,22 @@ const detailFields = computed(() =>
     }))
     .filter(组 => 组.字段.length > 0),
 );
+
+/** 情感倾向的下拉选项: 枚举由 恋爱规则.ts 持有(系数也在那边), 界面不重复写词表 */
+const 情感倾向选项 = Object.keys(情感倾向表);
+/** 当前详情页的 NPC 是否已被标记为恋爱对象(标记即开关, 没有全局设置项) */
+const 是恋爱对象 = computed(() => String(selectedNpcCard.value?.['恋爱对象'] ?? '').trim() === '是');
+
+/** 标记/取消恋爱对象: 只写「恋爱对象」一个字段(其余恋爱字段由首轮更新惰性补齐),
+ *  取消标记写空值 = 删掉该字段(空值即删除), 于是提示词与合并逻辑都回到"未标记"路径。 */
+function 切换恋爱对象() {
+  if (!selectedNpc.value || !selectedNpcCard.value) return;
+  const 名字 = selectedNpc.value;
+  const 标记 = String(selectedNpcCard.value['恋爱对象'] ?? '').trim() === '是';
+  const 结果 = 更新状态卡(data.value, 名字, { 恋爱对象: 标记 ? '' : '是' }, 建变更环境());
+  data.value = 结果.数据;
+  toastSuccess(标记 ? `已取消 ${名字} 的恋爱对象标记` : `已把 ${名字} 标记为恋爱对象(下一轮更新开始折算恋爱事件)`);
+}
 
 /** 折叠连续空行并去掉首尾空白，避免字段值里的多行换行造成大片空行 */
 function cleanText(text: string): string {
@@ -2731,6 +2809,19 @@ function clearAll() {
   color: var(--bf-dim);
   opacity: 0.6;
   font-style: italic;
+}
+/* 手动新增一条: 台账卡片底部的一行(输入框 + 按钮) */
+.bf-ledger-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--bf-border);
+}
+.bf-ledger-add-input {
+  flex: 1;
+  min-width: 0;
 }
 .bf-ledger-list {
   display: flex;

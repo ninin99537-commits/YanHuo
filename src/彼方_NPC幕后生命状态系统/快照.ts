@@ -287,14 +287,16 @@ function buildSnapshotPayload(data, anchorFloor, processedFloor) {
     // 快照体积控制: 清理每张 NPC 卡的调试/运行时字段, 防止长聊天里快照无限膨胀
     // - 最后更新: 现实时间戳, 每次更新都变, 对恢复状态无意义
     // - 人设参考: 每轮更新动态注入的世界书人设(由 update.ts 按 NPC 名字激活), 不该入库
+    // - 恋爱事件: 临时的结构化事件载荷(合并时已被消费删除), 防御性清理, 绝不入库
     // - 卡字段计数: 旧版调试字段, 已从数据流移除
     const cleanedNpc = {};
     for (const [name, card] of Object.entries(data.NPC ?? {})) {
         if (!card || typeof card !== 'object')
             continue;
-        const cleaned = { ...card };
+        const cleaned: Record<string, any> = { ...card };
         delete cleaned['最后更新'];
         delete cleaned['人设参考'];
+        delete cleaned['恋爱事件'];
         cleanedNpc[name] = cleaned;
     }
     return {

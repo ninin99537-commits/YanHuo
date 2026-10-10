@@ -147,6 +147,9 @@ export async function 收集本轮输入(参数: 取料参数) {
         currentCards,
         autoTrackEnabled: settings.更新.自动建档 !== false,
         physioEnabled: settings.更新.生理监测,
+        // 恋爱子系统: 标记即开关——只有被玩家标记为恋爱对象的 NPC 才进恋爱说明段。
+        // 没有任何标记时是空数组, 恋爱段输出空串, 提示词与改动前逐字节相同(零成本、零回归)。
+        恋爱对象名单: tracked.filter((name: string) => String(currentCards[name]?.['恋爱对象'] ?? '').trim() === '是'),
         破限: !!settings.更新.破限,
         头部填充: !!settings.更新.提示词头部填充,
         头部填充文本: settings.更新.头部填充文本 ?? '',

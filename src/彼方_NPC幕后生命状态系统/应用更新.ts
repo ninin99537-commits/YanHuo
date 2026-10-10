@@ -7,8 +7,10 @@
 import { APPEND_CARD_FIELDS, CARD_FIELDS, LEGACY_CARD_FIELDS } from './卡字段';
 import { applyConceptionCheck, CYCLE_STAGE_INFLUENCE, correctPhysioByStoryTime, ensurePregnancyKnowledge, extractLactationMonths, extractPregnancyWeek, cycleStageName, lactationExpired, normalizeRaceScale, PHYSIO_CYCLE_MAX, PHYSIO_CYCLE_MIN, PHYSIO_FIELDS, PREGNANCY_KNOWN_CONFIRMED, PREGNANCY_KNOWN_SUSPECT, PREGNANCY_KNOWN_UNKNOWN, PREGNANCY_KNOWN_VALUES, RACE_SCALE_FIELDS } from './生理规则';
 import { fmtStoryTime, parseStoryTime, parseStoryTimeRange, withStoryDate } from './剧情时间';
+import { 应用恋爱回合, 校验标签 } from './恋爱规则';
 import { isReservedTopLevelKey } from './模型请求';
-import { 合并台账, 读取台账 } from './事务台账';
+import { 合并台账, 读取台账, 未回票编号, 新建台账诊断 } from './事务台账';
+import type { 台账诊断 } from './事务台账';
 
 /** 脱敏接口地址(隐藏地址中可能携带的 token/key 查询参数), 用于错误日志。
  *  这行注释原先落在 update.ts 的 updateNpcStates 头上(从导出脚本还原时串了行, 文档挂到了它不描述的函数上), 这里归位。 */
@@ -183,7 +185,7 @@ function dedupeRecentEvents(text) {
     return result.slice(-3).join('；');
 }
 
-function mergeCard(oldCard, update, storyTimeText = '') {
+function mergeCard(oldCard, update, storyTimeText = '', 诊断?: 台账诊断) {
     const merged = { ...(oldCard ?? {}) };
     // 剧情时间已废弃独立记录(时间轴功能已下线), 不再写入状态卡; 顺带清理旧数据残留
     delete merged['剧情时间'];
@@ -204,7 +206,7 @@ function mergeCard(oldCard, update, storyTimeText = '') {
             // 本轮没返回且卡里本来就没有 → 不写空数组进去(不给每张卡新增一个恒空的字段)
             if (value === undefined && merged[key] === undefined)
                 continue;
-            merged[key] = 合并台账(读取台账(merged[key]), value, storyTimeText);
+            merged[key] = 合并台账(读取台账(merged[key]), value, storyTimeText, 诊断);
             continue;
         }
         if (typeof value === 'string' && value.trim()) {
@@ -437,6 +439,53 @@ function mergeCard(oldCard, update, storyTimeText = '') {
     else {
         delete merged['生理周期日期'];
     }
+    // ==== 恋爱子系统(标记即开关: 没有 恋爱对象="是" 的卡一个字段都不碰) ====
+    // 一整块自包含代码: 只读写恋爱字段, 与上面的生理块零字段交集, 所以放末尾没有任何顺序顾虑,
+    // 也不拆成多个插入点(独立性一目了然, 一处代码一处用例)。
+    // **闸必须在"复制恋爱事件入卡"之前**: 恋爱事件不在 CARD_FIELDS 里, mergeCard 的字符串循环
+    // 不管它——一旦进了卡就没有任何路径会删它, 会随每份快照一路膨胀。未标记时连复制都不做。
+    if (String(merged['恋爱对象'] ?? '').trim() === '是') {
+        const 恋爱事件 = update['恋爱事件'];
+        const 事件数组 = Array.isArray(恋爱事件)
+            ? 恋爱事件.filter(item => item && typeof item === 'object' && !Array.isArray(item))
+            : (恋爱事件 && typeof 恋爱事件 === 'object' ? [恋爱事件] : []);
+        if (事件数组.length > 0)
+            merged['恋爱事件'] = _.cloneDeep(事件数组);
+        else if (恋爱事件 !== undefined && 恋爱事件 !== null)
+            console.warn(`[彼方] ${merged['曾用名'] || ''} 「恋爱事件」形态不合法(应为事件数组), 已忽略`);
+        // 结算(纯函数返回补丁): 逐条折算 → 单轮上限只夹涨 → 时间回落 → 夹0-100 → 情欲地板 → 阶段重算 → 恋爱动向
+        Object.assign(merged, 应用恋爱回合(merged, merged['恋爱事件'] ?? [], storyTimeText));
+        // 恋爱标签归一化: 词表过滤 → 去重 → 截断到 5(放在合并之后跑, 见 prompts 里的词表说明)
+        // "归一化后为空"与"想清空"是两件事(§3.7 v7):
+        //   本轮报的词一个都不在词表里 = AI 报错了 → **保留旧标签**(不能把卡上已有的合法标签删掉);
+        //   本轮没报(mergeCard 的字符串循环对空串一律跳过) → 沿用旧值, 但旧值也过一遍归一化。
+        const 标签本轮 = typeof update['恋爱标签'] === 'string' ? update['恋爱标签'].trim() : '';
+        if (标签本轮) {
+            const 归一 = 校验标签(标签本轮);
+            if (归一) {
+                merged['恋爱标签'] = 归一;
+            }
+            else {
+                const 旧标签 = String(oldCard?.['恋爱标签'] ?? '').trim();
+                if (旧标签)
+                    merged['恋爱标签'] = 旧标签;
+                else
+                    delete merged['恋爱标签'];
+                console.warn(`[彼方] ${merged['曾用名'] || ''} 「恋爱标签」全是词表外的词, 已忽略: ${标签本轮}`);
+            }
+        }
+        else if (merged['恋爱标签'] !== undefined) {
+            const 归一 = 校验标签(String(merged['恋爱标签'] ?? ''));
+            if (归一)
+                merged['恋爱标签'] = 归一;
+            else
+                delete merged['恋爱标签']; // 旧值本身就是空的/全非法 → 不留空字段
+        }
+        delete merged['恋爱事件']; // 消费后删除, 永不落盘(照 受孕事件)
+    }
+    else if (update['恋爱事件'] !== undefined && update['恋爱事件'] !== null) {
+        console.warn(`[彼方] ${merged['曾用名'] || ''} 未标记为恋爱对象却返回了「恋爱事件」, 已忽略`);
+    }
     merged['最后更新'] = Date.now();
     return merged;
 }
@@ -460,7 +509,15 @@ function resolveRenamedNpc(newData, name, card, playerName) {
     return { name, oldCard: newData.NPC[name] };
 }
 
-function applyUpdate(data, parsed, timeJump = null, playerName = null, autoTrack = true) {
+/**
+ * `applyUpdate` 的**临时输出**(调用方传一个空对象进来收, 不落库、不进快照):
+ * `未回票` = 本轮每个 NPC 里没被模型过问的「进行中」编号, 供世界书注入当轮加"（未表态，待确认）"。
+ * 为什么用出参而不是挂在返回值上: `newData` 会整体写进楼层快照, 任何挂上去的临时数据都会**持久化**;
+ * 而这个标记的正确寿命只有一轮(换聊天/重写世界书时就该消失)。
+ */
+export type 台账输出 = { 未回票?: Record<string, string[]> };
+
+function applyUpdate(data, parsed, timeJump = null, playerName = null, autoTrack = true, 台账输出: 台账输出 = {}) {
     const newData = {
         ...data,
         名单: [...data.名单],
@@ -492,6 +549,32 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null, autoTrack
     const isTrackedNpc = (name) => newData.名单.includes(name) || !!newData.NPC[name];
     const skippedNewNpcs = [];
     const updatedNames = [];
+    /** 本轮每个 NPC 的未回票编号(临时输出, 见 台账输出 的类型说明) */
+    const 未回票记录: Record<string, string[]> = {};
+    台账输出.未回票 = 未回票记录;
+    /**
+     * 合并一张卡, 并把台账层的三条**静默路径**汇总成日志(每轮每 NPC 至多三行)。
+     * 为什么必须留痕: 这三条路径过去全是无声的——载荷被丢(内容重复)、改动被吞(重抄+改状态)、
+     * 条目根本没被过问(缺席即继续)。出问题时无从查起, 而"看不见"本身会掩盖模型服从度的真相。
+     */
+    const 合并一张卡 = (名字: string, 旧卡: Record<string, any> | undefined, 新卡: Record<string, any>) => {
+        const 诊断 = 新建台账诊断();
+        const 旧台账 = 读取台账(旧卡?.['未完成事项']);
+        const 未回票 = 未回票编号(旧台账, 新卡?.['未完成事项']);
+        const 合并后 = mergeCard(旧卡, 新卡, storyTimeText, 诊断);
+        if (诊断.重复丢弃 > 0)
+            console.info(`[彼方] NPC「${名字}」本轮 ${诊断.重复丢弃} 条载荷因内容重复被丢弃(其中 ${诊断.重复命中终态} 条命中终态条目)`);
+        if (诊断.复活拦截.length > 0)
+            console.warn(`[彼方] NPC「${名字}」${诊断.复活拦截.join('/')} 收到"改回进行中"的重复内容载荷, 已忽略(内容重抄只许收束; 要重开请用编号指名或面板按钮)`);
+        if (诊断.相对锚.length > 0)
+            console.info(`[彼方] NPC「${名字}」新事务内容仍是相对时间词且无绝对日期(时间锚纪律): ${诊断.相对锚.join(' / ')}`);
+        if (未回票.length > 0) {
+            未回票记录[名字] = 未回票;
+            const 进行中条数 = 旧台账.filter(事务 => 事务.状态 === '进行中').length;
+            console.warn(`[彼方] NPC「${名字}」${进行中条数} 条进行中里有 ${未回票.length} 条本轮未表态(注入侧已标"待确认"): ${未回票.join('/')}`);
+        }
+        return 合并后;
+    };
     for (const [name, card] of Object.entries(npcUpdates)) {
         // 顶层保留键(防止 AI 误把受孕事件/剧情时间/思考流程等放顶层被当成 NPC 建档)
         if (isReservedTopLevelKey(name)
@@ -509,7 +592,7 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null, autoTrack
             continue;
         }
         const resolved = resolveRenamedNpc(newData, name, card, playerName);
-        newData.NPC[resolved.name] = mergeCard(resolved.oldCard, card, storyTimeText);
+        newData.NPC[resolved.name] = 合并一张卡(resolved.name, resolved.oldCard, card);
         updatedNames.push(resolved.name);
         if (!newData.名单.includes(resolved.name))
             newData.名单.push(resolved.name);
@@ -537,7 +620,7 @@ function applyUpdate(data, parsed, timeJump = null, playerName = null, autoTrack
                     continue;
                 }
                 const resolved = resolveRenamedNpc(newData, name, card, playerName);
-                newData.NPC[resolved.name] = mergeCard(resolved.oldCard, card, storyTimeText);
+                newData.NPC[resolved.name] = 合并一张卡(resolved.name, resolved.oldCard, card);
                 if (!updatedNames.includes(resolved.name))
                     updatedNames.push(resolved.name);
                 if (!newData.名单.includes(resolved.name))

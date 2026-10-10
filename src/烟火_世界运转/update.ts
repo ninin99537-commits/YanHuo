@@ -221,8 +221,8 @@ export async function updateWorld(force = false): Promise<void> {
         console.error('[烟火] 同步世界书条目失败:', error);
       });
     }
-    const eventCount = newData.事件.length;
-    console.info(`[烟火] 世界推进完成: ${newData.小结 || '(无小结)'} (事件 ${eventCount} 件, 新增 ${diff.added.length} 件)`);
+    // 两个桶各报各的: `事件` 里只有活跃的, 墓碑住在 `已了结`(v2.5 起)
+    console.info(`[烟火] 世界推进完成: ${newData.小结 || '(无小结)'} (进行中 ${newData.事件.length} 件 / 已了结 ${(newData.已了结 ?? []).length} 件, 新增 ${diff.added.length} 件)`);
     toastSuccess(`烟火: ${newData.小结 || '世界无大事'}`, '烟火');
   } catch (error) {
     if (abortSignal.aborted) {

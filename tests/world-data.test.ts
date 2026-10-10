@@ -89,15 +89,17 @@ console.log('\n[3] 复读同一条: 只留第一份');
   check('留的是第一份', 新.事件[0].演变[0].变化, '第一次');
 }
 
-console.log('\n[4] 新事件不许直接"已结束"; 有历史的允许了结');
+console.log('\n[4] 新事件不许直接"已结束"; 有历史的允许了结(了结的搬进墓碑桶)');
 {
   const 无历史 = validateAndNormalize(载荷({ 事件: [{ 标题: '凭空结束', 阶段: '已结束' }] }), 旧世界());
   check('凭空"已结束"被丢弃', 无历史.事件.length, 0);
+  check('也没进墓碑桶(没有过程的事不许凭空了结)', 无历史.已了结.length, 0);
 
   const 旧 = 旧世界({ 事件: [事件({ id: 'e1', 标题: '老事' })] });
   const 有历史 = validateAndNormalize(载荷({ 事件: [{ id: 'e1', 标题: '老事', 阶段: '已结束' }] }), 旧);
-  check('认领回来的一条可以了结', 有历史.事件.length, 1);
-  check('阶段是已结束', 有历史.事件[0].阶段, '已结束');
+  check('认领回来的一条可以了结', 有历史.已了结.length, 1);
+  check('阶段是已结束', 有历史.已了结[0].阶段, '已结束');
+  check('不变量: 活跃桶里没有它', 有历史.事件.length, 0);
 }
 
 console.log('\n[5] id 由脚本独占签发: AI 编的编号不入档');
@@ -140,8 +142,10 @@ console.log('\n[8] 换血守卫: 未结束的旧事件没被带回就自动捞�
   const 少丢 = validateAndNormalize(载荷({ 事件: [1, 2, 3].map(i => ({ id: `e${i}`, 标题: ['甲', '乙', '丙'][i - 1] })) }), 旧4);
   check('只丢一条也捞回(补在末尾)', 少丢.事件.map(e => e.标题), ['甲', '乙', '丙', '丁']);
 
-  const 旧结束 = 旧世界({ 事件: [事件({ id: 'e1', 标题: '了结的事', 阶段: '已结束' })] });
-  check('已结束的不捞回(AI 可以真正删掉它)', validateAndNormalize(载荷({ 事件: [] }), 旧结束).事件.length, 0);
+  const 旧墓碑 = 旧世界({ 已了结: [事件({ id: 'e1', 标题: '了结的事', 阶段: '已结束' })] });
+  const 保住 = validateAndNormalize(载荷({ 事件: [] }), 旧墓碑);
+  check('墓碑不会被捞回活跃桶(AI 无权让它复活)', 保住.事件.length, 0);
+  check('墓碑桶照旧保留(那是存储, 不归 AI 管)', 保住.已了结.map(e => e.标题), ['了结的事']);
 }
 
 console.log('\n[9] 事件清单总数上限');
@@ -153,14 +157,15 @@ console.log('\n[9] 事件清单总数上限');
   check('留下的是最新的', 新.事件[EVENT_LIMIT - 1].标题, `事件${EVENT_LIMIT + 5}`);
 }
 
-console.log('\n[10] 已结束事件只留最近几条');
+console.log('\n[10] 墓碑桶只留最近几条(活跃桶不参与这把尺)');
 {
-  const 造 = () => Array.from({ length: ENDED_EVENT_LIMIT + 2 }, (_, i) => ({ id: `e${i + 1}`, 标题: `旧事${i + 1}`, 阶段: '已结束' }));
-  const 旧 = 旧世界({ 事件: 造().map(raw => 事件(raw as any)) });
-  const 新 = validateAndNormalize(载荷({ 事件: 造() }), 旧);
+  const 旧墓碑 = Array.from({ length: ENDED_EVENT_LIMIT + 1 }, (_, i) => 事件({ id: `t${i + 1}`, 标题: `旧事${i + 1}`, 阶段: '已结束' }));
+  const 旧 = 旧世界({ 事件: [事件({ id: 'e9', 标题: '刚了结' })], 已了结: 旧墓碑 });
+  const 新 = validateAndNormalize(载荷({ 事件: [{ id: 'e9', 标题: '刚了结', 阶段: '已结束' }] }), 旧);
 
-  check('裁到上限', 新.事件.length, ENDED_EVENT_LIMIT);
-  check('留的是最近的', 新.事件[ENDED_EVENT_LIMIT - 1].标题, `旧事${ENDED_EVENT_LIMIT + 2}`);
+  check('裁到上限', 新.已了结.length, ENDED_EVENT_LIMIT);
+  check('留的是最近的', 新.已了结[ENDED_EVENT_LIMIT - 1].标题, '刚了结');
+  check('最旧的被挤掉', 新.已了结[0].标题, '旧事3');
 }
 
 console.log('\n[11] 势力: 过滤非势力名 / 沿用旧字段 / 上限 / 被整体清空时捞回');

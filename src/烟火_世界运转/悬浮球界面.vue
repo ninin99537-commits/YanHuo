@@ -94,9 +94,9 @@ const tab = ref<'now' | 'chronicle' | 'factions' | 'world' | 'logs' | 'settings'
 const world = computed<WorldData>(() => data.value);
 // 「这个世界有没有数据」问同一处(有世界数据): 别处再写一遍, 迟早两处口径不一致
 const hasWorld = computed(() => 有世界数据(world.value));
+// 活跃事件: `事件` 里本来就没有墓碑(v2.5 起已了结独立成桶), 所以不再过滤阶段
 const activeEvents = computed(() =>
   world.value.事件
-    .filter(event => event.阶段 !== '已结束')
     .slice(-4)
     .reverse(),
 );
@@ -176,10 +176,11 @@ const 隐秘选项 = 事件枚举.隐秘;
 const 阶段筛选项: readonly string[] = ['全部', '进行中', '已结束'];
 const 规模筛选项: readonly string[] = ['全部', ...事件枚举.规模];
 const chronicleEvents = computed(() => {
-  const events = [...world.value.事件].reverse();
+  // 两个桶: 活跃(`事件`)与墓碑(`已了结`)。各自最新在前; 「全部」时两个桶都在, 且活跃的必须在上面
+  const 活跃 = [...world.value.事件].reverse();
+  const 墓碑 = [...(world.value.已了结 ?? [])].reverse();
+  const events = stageFilter.value === '进行中' ? 活跃 : stageFilter.value === '已结束' ? 墓碑 : [...活跃, ...墓碑];
   return events.filter(event => {
-    if (stageFilter.value === '进行中' && event.阶段 === '已结束') return false;
-    if (stageFilter.value === '已结束' && event.阶段 !== '已结束') return false;
     if (scaleFilter.value !== '全部' && event.规模 !== scaleFilter.value) return false;
     return true;
   });

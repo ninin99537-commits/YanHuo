@@ -131,7 +131,10 @@ export function validateAndNormalize(parsed: any, oldData: WorldData, 时间约�
   if (parsed['势力'] !== undefined && (typeof parsed['势力'] !== 'object' || parsed['势力'] === null || Array.isArray(parsed['势力']))) {
     throw Error('「势力」必须是对象(没有势力时返回空对象 {}), 请重新输出');
   }
-  const normalizedEvents: WorldEvent[] = [];
+  // 两个桶: `活跃` = 此刻在酝酿/进行/尾声的(进 `事件`), `本轮了结` = AI 这一轮收尾的(进 `已了结`)。
+  // 墓碑桶归**代码**维护: AI 看不见也不带回, 它唯一的"了结"动作就是把某条的 阶段 改成 已结束。
+  const 活跃: WorldEvent[] = [];
+  const 本轮了结: WorldEvent[] = [];
   const oldEvents = oldData.事件 ?? [];
   // 对账钥匙: 先按 id(脚本签发的唯一标识, AI 改标题也不丢), 再按标题兜底; 一条旧事件只能被认领一次。
   // AI 不可信之处逐一兜住: 改名(id 救)、漏带 id(标题救)、id 被占用/被顶(继续尝试标题)、
@@ -180,31 +183,33 @@ export function validateAndNormalize(parsed: any, oldData: WorldData, 时间约�
       if (演变.length > EVENT_HISTORY_LIMIT) 演变.splice(0, 演变.length - EVENT_HISTORY_LIMIT);
     }
     // id 由脚本独占签发: 认领到旧事件沿用其 id(旧快照迁移的空 id 也重签), 全新事件一律新签
-    normalizedEvents.push({ ...rest, id: old && old.id ? old.id : newEventId(), 前情: 前情Text, 演变 });
+    const 条目: WorldEvent = { ...rest, id: old && old.id ? old.id : newEventId(), 前情: 前情Text, 演变 };
+    if (条目.阶段 === '已结束') 本轮了结.push(条目);
+    else 活跃.push(条目);
   }
-  // 清单换血守卫: AI 忽略"原样带回"指令把旧事件大量丢掉时(未认领旧事件占多数), 把**未结束**的
-  // 旧事件自动捞回(原样, 不算新增)——AI 无权让进行中的事凭空消失, 只有 AI 明确带回"已结束"的
-  // 才算真正了结。真正"删除已结束旧事件"的意图不受影响(捞回范围仅限 酝酿/进行/尾声)。
-  const claimed = new Set(normalizedEvents.map(e => e.id));
-  const dropped = oldEvents.filter(e => e.id && !claimed.has(e.id) && e.阶段 !== '已结束');
+  // 清单换血守卫: AI 忽略"原样带回"指令把旧事件大量丢掉时(未认领旧事件占多数), 把旧事件自动捞回
+  // (原样, 不算新增)——AI 无权让进行中的事凭空消失, 只有 AI 明确带回"已结束"的才算真正了结。
+  // `事件` 里本来就没有墓碑(旧墓碑住在 `已了结`), 所以捞回范围天然只有 酝酿/进行/尾声。
+  const claimed = new Set([...活跃, ...本轮了结].map(e => e.id));
+  const dropped = oldEvents.filter(e => e.id && !claimed.has(e.id));
   if (dropped.length > 0 && oldEvents.length > 0) {
     const dropRatio = dropped.length / oldEvents.length;
     if (dropRatio >= 0.5) {
       console.warn(`[烟火] 事件清单换血: ${dropped.length}/${oldEvents.length} 件未结束事件未被带回(${dropped.map(e => e.标题).join('、')}), 已自动捞回——提示词要求原样维护清单, 请检查模型是否遵守`);
     }
-    normalizedEvents.push(...dropped);
+    活跃.push(...dropped);
   }
-  // 已结束事件只保留最近 ENDED_EVENT_LIMIT 条(清单按时间从早到晚), 未结束的全部保留:
-  // 注入只发未结束事件, 但面板与快照会被旧事件越拖越长
-  const endedKeep = new Set(normalizedEvents.filter(event => event.阶段 === '已结束').slice(-ENDED_EVENT_LIMIT));
-  const prunedEvents = normalizedEvents.filter(event => event.阶段 !== '已结束' || endedKeep.has(event));
-  if (prunedEvents.length < normalizedEvents.length) {
-    console.info(`[烟火] 已结束事件超过 ${ENDED_EVENT_LIMIT} 条, 自动清理最旧的 ${normalizedEvents.length - prunedEvents.length} 条`);
+  // 墓碑桶 = 旧墓碑在前 + 本轮了结在后(清单按时间从早到晚), 只留最近 ENDED_EVENT_LIMIT 条:
+  // "保留已了结的事"是存储, 不是判断——它从这里起完全归代码, AI 不再逐字带回
+  const 墓碑候选 = [...(oldData.已了结 ?? []), ...本轮了结];
+  const 已了结 = 墓碑候选.slice(-ENDED_EVENT_LIMIT);
+  if (墓碑候选.length > 已了结.length) {
+    console.info(`[烟火] 已了结的事超过 ${ENDED_EVENT_LIMIT} 条, 自动清理最旧的 ${墓碑候选.length - 已了结.length} 条`);
   }
-  normalizedEvents.splice(0, normalizedEvents.length, ...prunedEvents);
-  if (normalizedEvents.length > EVENT_LIMIT) {
+  // `事件` 的条数上限只夹活跃桶(墓碑按 ENDED_EVENT_LIMIT 单独夹)
+  if (活跃.length > EVENT_LIMIT) {
     // 清单按时间从早到晚排列, 超限时保留最新的
-    normalizedEvents.splice(0, normalizedEvents.length - EVENT_LIMIT);
+    活跃.splice(0, 活跃.length - EVENT_LIMIT);
   }
   const factions: Record<string, WorldFaction> = {};
   const rawFactions = parsed['势力'] && typeof parsed['势力'] === 'object' ? parsed['势力'] : {};
@@ -332,7 +337,8 @@ export function validateAndNormalize(parsed: any, oldData: WorldData, 时间约�
     伏笔,
     节令,
     指标,
-    事件: normalizedEvents,
+    事件: 活跃,
+    已了结,
     势力: factions,
     小结: String(parsed['小结'] ?? parsed['小小结'] ?? '').trim(),
   };

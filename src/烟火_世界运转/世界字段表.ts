@@ -31,6 +31,12 @@ export const SEED_LIMIT = 5;
 export const OCCASION_LIMIT = 6;
 export const METRIC_LIMIT = 6;
 export const FACTION_LIMIT = 8;
+/** 活跃事件的容量上限(`事件` 只装"此刻在发生的事"; 墓碑住在 `已了结`, 按 ENDED_EVENT_LIMIT 单独夹) */
+export const EVENT_LIMIT = 30;
+/** 已了结(墓碑)的保留条数(超出后丢最旧的): 面板与快照会被旧事越拖越长, 但注入与 AI 都看不到它们。
+ *  v2.5 起它从 state.ts 搬到这里: 保存世界状态.ts 也要用它(旧快照的墓碑分流), 而 state.ts 反过来
+ *  依赖存储层 —— 常量放在这一层, 两边都只依赖 世界字段表, 不会绕出循环。 */
+export const ENDED_EVENT_LIMIT = 6;
 
 /** 事件清单里界面要用的四组枚举(以前在模板里手抄了六组字面量: 四个下拉 + 两个筛选) */
 export const 事件枚举 = {

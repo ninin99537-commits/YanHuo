@@ -15,7 +15,8 @@ import type { EventEvolution, WorldData, WorldEvent, WorldFaction, WorldMetric, 
 import { EVENT_SCALE, EVENT_SECRECY, EVENT_SPREAD, EVENT_STAGE } from './schema';
 import { getSettings } from './settings';
 import { toastError } from './toast';
-import { 取层, 规范化条目 } from './世界字段表';
+// 墓碑上限与五层容量同一处(世界字段表): 这里不引 state.ts —— 它反过来依赖本模块, 会成环
+import { ENDED_EVENT_LIMIT, 取层, 规范化条目 } from './世界字段表';
 
 export const STORAGE_KEY = '烟火';
 export const DATA_VERSION = 1;
@@ -45,6 +46,8 @@ export function emptyData(): WorldData {
     节令: [],
     指标: {},
     事件: [],
+    // 墓碑桶: 只由代码维护(见 sanitizeSnapshot 的旧格式分流与 世界数据.ts 的双桶合并)
+    已了结: [],
     势力: {},
     小结: '',
     统计: { 推进次数: 0, 最后推进: 0 },
@@ -101,6 +104,33 @@ function loadMeta(): ChatMeta {
   };
 }
 
+/** 重建一条事件(旧快照的 知晓/迫近 已废弃, 不随展开带进新结构) */
+function 重建事件(列表: unknown[]): WorldEvent[] {
+  return 列表
+    .filter((item: unknown): item is WorldEvent => !!item && typeof item === 'object' && typeof (item as WorldEvent).标题 === 'string')
+    .map(event => ({
+      id: String(event.id ?? ''),
+      标题: String(event.标题 ?? '').slice(0, 60),
+      描述: String(event.描述 ?? ''),
+      地点: String(event.地点 ?? ''),
+      时间: String(event.时间 ?? ''),
+      规模: EVENT_SCALE.includes(event.规模) ? event.规模 : '要事',
+      传播: EVENT_SPREAD.includes(event.传播) ? event.传播 : '本埠',
+      渠道: String(event.渠道 ?? ''),
+      势力: String(event.势力 ?? ''),
+      阶段: EVENT_STAGE.includes(event.阶段) ? event.阶段 : '进行',
+      隐秘: EVENT_SECRECY.includes(event.隐秘) ? event.隐秘 : '公开',
+      代表人物: String(event.代表人物 ?? ''),
+      前情: String(event.前情 ?? ''),
+      演变: Array.isArray(event.演变)
+        ? event.演变
+            .filter((step): step is EventEvolution => !!step && typeof step === 'object' && typeof step.变化 === 'string')
+            .map(step => ({ 时间: String(step.时间 ?? ''), 变化: String(step.变化) }))
+            .slice(-EVENT_HISTORY_LIMIT)
+        : [],
+    }));
+}
+
 /** 把一份楼层快照(可能是旧格式)按当前结构重建: 旧字段名迁移、废弃字段丢弃、缺字段补缺省 */
 function sanitizeSnapshot(snapshot: Record<string, any>): WorldData {
   const data = emptyData();
@@ -112,31 +142,13 @@ function sanitizeSnapshot(snapshot: Record<string, any>): WorldData {
       总览: String(snapshot.世界.总览 ?? snapshot.世界.大势 ?? ''),
     };
   }
-  if (Array.isArray(snapshot.事件)) {
-    data.事件 = snapshot.事件
-      .filter((item: unknown): item is WorldEvent => !!item && typeof item === 'object' && typeof (item as WorldEvent).标题 === 'string')
-      // 显式重建: 旧快照的 知晓/迫近 已废弃, 不随展开带进新结构
-      .map(event => ({
-        id: String(event.id ?? ''),
-        标题: String(event.标题 ?? '').slice(0, 60),
-        描述: String(event.描述 ?? ''),
-        地点: String(event.地点 ?? ''),
-        时间: String(event.时间 ?? ''),
-        规模: EVENT_SCALE.includes(event.规模) ? event.规模 : '要事',
-        传播: EVENT_SPREAD.includes(event.传播) ? event.传播 : '本埠',
-        渠道: String(event.渠道 ?? ''),
-        势力: String(event.势力 ?? ''),
-        阶段: EVENT_STAGE.includes(event.阶段) ? event.阶段 : '进行',
-        隐秘: EVENT_SECRECY.includes(event.隐秘) ? event.隐秘 : '公开',
-        代表人物: String(event.代表人物 ?? ''),
-        前情: String(event.前情 ?? ''),
-        演变: Array.isArray(event.演变)
-          ? event.演变
-              .filter((step): step is EventEvolution => !!step && typeof step === 'object' && typeof step.变化 === 'string')
-              .map(step => ({ 时间: String(step.时间 ?? ''), 变化: String(step.变化) }))
-              .slice(-EVENT_HISTORY_LIMIT)
-          : [],
-      }));
+  {
+    const 活跃 = Array.isArray(snapshot.事件) ? 重建事件(snapshot.事件) : [];
+    const 新墓碑 = Array.isArray(snapshot.已了结) ? 重建事件(snapshot.已了结) : [];
+    // 旧格式迁移: 旧快照的墓碑混在「事件」里, 这里分流出去(不然它们下一轮会被当成活跃事件发给 AI);
+    // 新格式的「事件」里没有墓碑, 第二个 filter 自然为空, 不会重复
+    data.事件 = 活跃.filter(event => event.阶段 !== '已结束');
+    data.已了结 = [...新墓碑, ...活跃.filter(event => event.阶段 === '已结束')].slice(-ENDED_EVENT_LIMIT);
   }
   // 势力与五层档案: 字段清单 / 缺省 / 旧字段名迁移 一律照 世界字段表.ts(候选 4 起不在这里手抄字段名)
   if (snapshot.势力 && typeof snapshot.势力 === 'object' && !Array.isArray(snapshot.势力)) {
@@ -268,6 +280,7 @@ function buildSnapshotPayload(data: WorldData, anchorFloor: number, processedFlo
     节令: klona(data.节令 ?? []),
     指标: klona(data.指标 ?? {}),
     事件: klona(data.事件),
+    已了结: klona(data.已了结 ?? []),
     势力: klona(data.势力),
     小结: data.小结 ?? '',
     统计: { 推进次数: data.统计?.推进次数 ?? 0, 最后推进: data.统计?.最后推进 ?? 0 },

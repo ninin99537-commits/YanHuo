@@ -7,6 +7,7 @@
 //   三次都坏 → 报错, 且"处理到楼层"与旧数据一个字段都不许动;
 //   接口没配置 / 没有可分析的回复 → 提前退出, 一次模型都不调;
 //   读取世界书 + 注入世界书条目 → 世界书真的被读、条目真的被写(经接缝)。
+//   v2.5 [7]: 两件都收尾后, 完成日志报「进行中 0 件 / 已了结 2 件」, 且墓碑不再进请求体(只在只读清单里)。
 import { createPinia, setActivePinia } from 'pinia';
 import { injectHostForTest } from '../src/烟火_世界运转/host';
 import { emptyData, loadData, useStateStore, useDebugStore, WORLDBOOK_ENTRY_NAME } from '../src/烟火_世界运转/state';
@@ -341,6 +342,59 @@ console.log('\n[6] 读取世界书 + 注入世界书条目: 世界书真的被�
   ok('角色卡主世界书里多了烟火的常驻条目', p.世界书.some((e: any) => e.name === WORLDBOOK_ENTRY_NAME));
   ok('条目内容带着这次的小结', JSON.stringify(p.世界书).includes('集市散场'));
   check('流程本身照常成功', 取状态().小结, '集市散场, 小镇归于安静');
+}
+
+console.log('\n[7] v2.5: 清单里只剩墓碑(2 已了结 / 0 进行中)时, 日志分开报, 且墓碑不再进请求体');
+{
+  // 墓碑不能凭空"生"出来(新事件直接以"已结束"生成会被丢弃), 所以老实地走三步:
+  //   ① 先起两件事(进行) → ② 下一轮把两件都收尾(它们搬进 `已了结`) → ③ 再一轮原样带回。
+  const 起步 = (阶段: string, 件: { id: string; 标题: string }[]) => JSON.stringify({
+    世界: { 时间: '2025-11-15 21:30', 氛围: '夜色渐深', 总览: '小镇安静下来' },
+    事件: 件.map(e => ({ id: e.id, 标题: e.标题, 阶段, 描述: 阶段 === '已结束' ? '已了结' : '正在推进' })),
+    小结: 阶段 === '已结束' ? '无事' : '两件事起了',
+  });
+  const 两件 = [{ id: '', 标题: '盐引亏空案结案' }, { id: '', 标题: '互市重开' }];
+  // 生成序列按引用传给假模型的每一次调用, 所以可以先占位、跑完一轮再按真实 id 回填
+  const 序列 = [起步('进行', 两件), '', ''];
+  const p = await 准备({ 生成序列: 序列 });
+
+  await updateWorld(false); // ① 起两件
+  const ids = 取状态().事件.map((e: any) => ({ id: e.id, 标题: e.标题 }));
+  check('前提: 两件都起来了', ids.length, 2);
+  ok('前提: 新事件拿得到脚本签发的 id', ids.every((e: any) => !!e.id));
+
+  // ② 下一轮把两件都收尾(正文不含任何时间线索, 世界时间沿用上一轮)
+  序列[1] = 起步('已结束', ids);
+  p.floors['5'] = { role: 'assistant', message: '第五楼: 风停了, 街上的旗子垂下来。', is_hidden: false };
+  await updateWorld(false);
+  check('前提: 活跃桶清空(墓碑搬走了)', 取状态().事件, []);
+  check('前提: 两件都成了墓碑', 取状态().已了结.map((e: any) => e.阶段), ['已结束', '已结束']);
+  check('前提: 墓碑的标题照旧', 取状态().已了结.map((e: any) => e.标题), ['盐引亏空案结案', '互市重开']);
+
+  // ③ 再一轮原样带回 → 这一轮的完成日志与请求体就是被观察对象
+  序列[2] = 序列[1];
+  p.floors['7'] = { role: 'assistant', message: '第七楼: 街上人多了些。', is_hidden: false };
+  const 行: string[] = [];
+  const 原info = console.info;
+  console.info = (...args: any[]) => { 行.push(args.map(String).join(' ')); };
+  try {
+    await updateWorld(false);
+  }
+  finally {
+    console.info = 原info;
+  }
+
+  const 完成行 = 行.filter(line => line.includes('世界推进完成'));
+  check('恰好报了一行完成日志', 完成行.length, 1);
+  ok('活跃与墓碑分开报', String(完成行[0] ?? '').includes('进行中 0 件 / 已了结 2 件'));
+  ok('不再把墓碑报成「事件 2 件」', !String(完成行[0] ?? '').includes('事件 2 件'));
+  check('模型被调了三次(每轮一次, 没有重试)', p.记录.raw.length, 3);
+
+  // 请求体: 墓碑既不在【世界当前状态】的 JSON 里, 又在只读清单里
+  const 请求 = JSON.stringify(p.记录.raw[2]);
+  const 状态行 = 请求.split('\\n').find(line => line.startsWith('{\\"世界\\"')) ?? '';
+  ok('墓碑不在【世界当前状态】的 JSON 里', !状态行.includes('盐引亏空案结案') && !状态行.includes('互市重开'));
+  ok('墓碑只在只读清单里露面', 请求.includes('【已经了结的事(只读)】盐引亏空案结案、互市重开'));
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);

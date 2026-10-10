@@ -224,7 +224,10 @@ export interface WorldData {
   伏笔: WorldSeed[];
   节令: WorldOccasion[];
   指标: Record<string, WorldMetric>;
+  /** 此刻正在酝酿/进行/尾声的事(**永不出现 阶段 === "已结束"**); 已了结的搬去 `已了结` */
   事件: WorldEvent[];
+  /** 已了结的事(墓碑): 由代码维护, AI 看不见、也不带回。注入与主 AI 完全无关, 只供面板回顾 */
+  已了结: WorldEvent[];
   势力: Record<string, WorldFaction>;
   /** 上次推进的一句话小结(面板显示用) */
   小结: string;

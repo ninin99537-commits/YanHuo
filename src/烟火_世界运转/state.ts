@@ -29,13 +29,11 @@ import type { WorldData, WorldInfo } from './schema';
 export const WORLDBOOK_ENTRY_NAME = '【烟火】世界动向';
 /** 悬浮球位置/主题等界面偏好(全局变量键) */
 export const UI_KEY = '烟火_界面';
-/** 事件清单与势力清单的容量上限 */
-export const EVENT_LIMIT = 30;
-/** 已结束事件的保留条数(超出后丢最旧的): 注入只发未结束事件, 但面板与快照会被旧事件越拖越长 */
-export const ENDED_EVENT_LIMIT = 6;
-/** 五层常驻档案(地域/大势/伏笔/节令/指标)与势力的容量上限现在只在 世界字段表.ts 里写一处(候选 4),
- *  这里原样转出去给原有调用方(世界数据.ts / 世界数据变更.ts / prompts.ts / 用例都从 state 取) */
-export { FACTION_LIMIT, METRIC_LIMIT, OCCASION_LIMIT, REGION_LIMIT, SEED_LIMIT, TREND_LIMIT } from './世界字段表';
+/** 事件清单与墓碑桶的容量上限现在只在 世界字段表.ts 里写一处(见那里的「容量上限」一段),
+ *  这里原样转出去给原有调用方(世界数据.ts / 世界数据变更.ts / prompts.ts / 用例都从 state 取)。
+ *  v2.5 起因 保存世界状态.ts 也要用 ENDED_EVENT_LIMIT(旧快照的墓碑分流)而搬到字段表 —— 存储层
+ *  不能反向依赖 state.ts(会成环, eslint 的 import-x/no-cycle 会拦)。 */
+export { ENDED_EVENT_LIMIT, EVENT_LIMIT, FACTION_LIMIT, METRIC_LIMIT, OCCASION_LIMIT, REGION_LIMIT, SEED_LIMIT, TREND_LIMIT } from './世界字段表';
 /** 世界状态的存储接口(候选 3): 实现在 ./保存世界状态.ts, 这里原样转出去, 既有调用方一行都不用改。
  *  转的是同一批函数对象本身(不是包一层), 所以"建世界数据环境().保存 === saveData"这类身份断言照旧成立。 */
 export { clearAllData, DATA_VERSION, discardSnapshotAt, emptyData, EVENT_HISTORY_LIMIT, loadData, saveData, SNAPSHOT_LIMIT, STORAGE_KEY, writeStateSnapshot };

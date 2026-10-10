@@ -129,6 +129,7 @@ import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/BiFang@master/dist/彼方
 - **推完要真机验证。** jsdelivr 刷新前，酒馆里跑的还是旧产物。
 
 > 🤖 两个投影仓都有 `[bot] bundle` 工作流：推源后机器人会自动 `rm -rf dist && pnpm install && pnpm build` 并补一个提交，所以即使偶尔漏提交 dist 也会被兜底重建；但它只重建**仓内存在 `index.ts` 的插件**，而产物由 `webpack.config.ts:54` 的 `globSync('{示例,src}/**/index.{ts,tsx,js,jsx}')` 决定——这就是为什么 YanHuo 的 `dist/` 有两份、BiFang 只有彼方一份。
+> ⚠️ **本机构建与 CI 构建不可能逐字节相同**——webpack 的模块 ID 由模块绝对路径派生，而两台机器的检出路径不同（实测同一段代码：本机 `777(e,n,t)`、CI `463(e,n,t)`）。所以推完源码后机器人**几乎总会**再补一个提交，这是正常现象，不是出错；也不必试图靠"提交一份完全一致的 dist"来避免它。
 > 推送被拒（non-fast-forward）时，多半是机器人刚补过一行：`git rebase origin/master` 后再推。
 
 > ⚠️ 同名仓库 `YanHuo` 里也有彼方全量源码（历史沿革，它的 `dist/` 因此也会构建出彼方产物）——但那里是烟火的主场，彼方的「官方发布仓库」是 `BiFang`，上传彼方改动以 BiFang 为准，YanHuo 里那份副本不保证同步。

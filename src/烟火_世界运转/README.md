@@ -190,6 +190,7 @@ import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/YanHuo@master/dist/烟火
 - **jsdelivr 有缓存。** `@master` 是非版本号引用，缓存较久；`[bot] bundle` 会自动打版本 tag，把刷新压到 12 小时内。要立刻验证，就用 **commit hash 或 tag** 直接 import。
 
 > 🤖 该仓库有 `[bot] bundle` 工作流：推源后机器人会自动 `rm -rf dist && pnpm install && pnpm build` 并补一个提交，所以即使偶尔漏提交 dist 也会被兜底重建；但它只重建**仓内存在 `index.ts` 的插件**，而产物由 `webpack.config.ts:54` 的 `globSync('{示例,src}/**/index.{ts,tsx,js,jsx}')` 决定。
+> ⚠️ **本机构建与 CI 构建不可能逐字节相同**——webpack 的模块 ID 由模块绝对路径派生，而两台机器的检出路径不同（实测同一段代码：本机 `777(e,n,t)`、CI `463(e,n,t)`）。所以推完源码后机器人**几乎总会**再补一个提交，这是正常现象，不是出错；也不必试图靠"提交一份完全一致的 dist"来避免它。
 > 推送被拒（non-fast-forward）时，多半是机器人刚补过一行：`git rebase origin/master` 后再推。
 
 > ⚠️ `YanHuo` 里同时有**彼方全量源码**（历史沿革），所以它的 `dist/` 里也会构建出彼方产物。

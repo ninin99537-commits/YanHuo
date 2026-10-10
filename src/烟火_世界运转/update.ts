@@ -28,7 +28,7 @@ import { 请求并校验 as 共用请求并校验 } from '../共用/模型往返
 import { createTextFilter } from '../共用/楼层标签过滤';
 import { 事件账目, validateAndNormalize } from './世界数据';
 import { 解析世界载荷 } from './解析';
-import { 建立世界时间约束 } from './时间校验';
+import { 建立世界时间约束, 描述世界日差, 算跨世界日 } from './时间校验';
 
 let isUpdating = false;
 
@@ -142,6 +142,9 @@ export async function updateWorld(force = false): Promise<void> {
     const latestReply = filter(recent[recent.length - 1].message);
     const 时间约束 = 建立世界时间约束(latestReply, data.世界.时间);
     const timeJump = 时间约束.跳跃;
+    // 「本轮跨了几个世界日」由脚本算出来当事实注入(v2.8 §3): 配额键与受校验的字段是同一处,
+    // 模型骗不开——它不能靠改写世界时间去解锁大跳额度(日期本来就受 校验世界时间 约束)。
+    const 跨日 = 算跨世界日(时间约束, data.世界.时间);
     const replyIds = new Set(recent.map(message => message.message_id));
     // 「最近剧情」上下文只取最新 1 层用户输入
     const context = buildLatestUserInput(recent[recent.length - 1].message_id, filter, replyIds, force ? 0 : clearLayer);
@@ -151,7 +154,7 @@ export async function updateWorld(force = false): Promise<void> {
           includeGlobal: settings.运转.读取全局世界书,
         })
       : '';
-    const messages = buildTickMessages({ world: data, reply, replyCount: recent.length, context, timeJump, 时间约束: 时间约束.提示, worldbook, playerName, playerDesc, 破限: settings.运转.破限, 头部填充: settings.运转.头部填充, 头部填充文本: settings.运转.头部填充文本 ?? '', 防截断: settings.运转.防截断, 预填充: settings.运转.预填充, 节令历法: settings.运转.节令历法, 世界指标: settings.运转.世界指标, 世界密度: settings.运转.世界密度 });
+    const messages = buildTickMessages({ world: data, reply, replyCount: recent.length, context, timeJump, 时间约束: 时间约束.提示, 跨日, worldbook, playerName, playerDesc, 破限: settings.运转.破限, 头部填充: settings.运转.头部填充, 头部填充文本: settings.运转.头部填充文本 ?? '', 防截断: settings.运转.防截断, 预填充: settings.运转.预填充, 节令历法: settings.运转.节令历法, 世界指标: settings.运转.世界指标, 世界密度: settings.运转.世界密度 });
     debugStore.record({
       time: Date.now(),
       model: settings.接口.模型,
@@ -221,8 +224,10 @@ export async function updateWorld(force = false): Promise<void> {
         console.error('[烟火] 同步世界书条目失败:', error);
       });
     }
-    // 两个桶各报各的: `事件` 里只有活跃的, 墓碑住在 `已了结`(v2.5 起)
-    console.info(`[烟火] 世界推进完成: ${newData.小结 || '(无小结)'} (进行中 ${newData.事件.length} 件 / 已了结 ${(newData.已了结 ?? []).length} 件, 新增 ${diff.added.length} 件)`);
+    // 两个桶各报各的: `事件` 里只有活跃的, 墓碑住在 `已了结`(v2.5 起)。
+    // 最前面那截是**世界时钟的三态**(v2.8 §2): 用户原先分不清"这一轮本来就没事"与"卡住了",
+    // 现在按 旧/新 世界时间的日期差如实报——跨了几天、没跨、还是时间压根不可解析(古代卡)。
+    console.info(`[烟火] 世界推进完成: ${描述世界日差(data.世界.时间, newData.世界.时间)} — ${newData.小结 || '(无小结)'} (进行中 ${newData.事件.length} 件 / 已了结 ${(newData.已了结 ?? []).length} 件, 新增 ${diff.added.length} 件)`);
     toastSuccess(`烟火: ${newData.小结 || '世界无大事'}`, '烟火');
   } catch (error) {
     if (abortSignal.aborted) {

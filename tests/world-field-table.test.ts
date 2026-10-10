@@ -9,7 +9,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { SettingsSchema, SEED_MATURITY, METRIC_TREND, type WorldData } from '../src/烟火_世界运转/schema';
 import { emptyData, FACTION_LIMIT, METRIC_LIMIT, OCCASION_LIMIT, REGION_LIMIT, SEED_LIMIT, TREND_LIMIT } from '../src/烟火_世界运转/state';
-import { buildInjectionPrompt, SYSTEM_PROMPT } from '../src/烟火_世界运转/prompts';
+import { buildInjectionPrompt, SYSTEM_PROMPT, 字段动势 } from '../src/烟火_世界运转/prompts';
 import vueSource from '../src/烟火_世界运转/悬浮球界面.vue?raw';
 import {
   事件枚举,
@@ -187,6 +187,39 @@ console.log('\n[7] 界面确实在消费这张表(不再手抄字段名与事件
   ok('界面不再手抄筛选字面量', !vueSource.includes("in ['全部', '要事', '大事']") && !vueSource.includes("in ['全部', '进行中', '已结束']"));
   ok('界面从字段表取事件枚举', vueSource.includes('事件枚举.规模'));
   ok('界面不再从 schema 手取枚举', !vueSource.includes('METRIC_TREND') && !vueSource.includes('SEED_MATURITY'));
+}
+
+console.log('\n[8] 字段动势归类(v2.8 §6): 表里每个内容字段都必须被归到一类, 不许漏');
+{
+  // §6.4 的三条机械断言住在这里(这是本版唯一一处把弱断言变成机械断言的地方):
+  //   1) 推进型 ∩ 结构型 = ∅
+  //   2) 并集(限定到这张表里的字段)**恰好等于** L58 点名的六个: 局势/进展/动向/对外关系/目标/前情
+  //   3) 表里出现新的态势类字段时**本用例翻红**, 逼人来归类
+  // 第 3 条的机制: 表里每个内容字段要么落在 字段动势 的两端, 要么落在这份"与动势无关"的名册里。
+  // 加字段的人必须在这两个地方之一登记, 否则下面的"没有未归类的字段"会报出漏网的那个名字。
+  const 与动势无关 = [
+    '概况', // 静态身份(【字段不重复】已经把它定成"它是什么")
+    '当权者', '头面人物', '势力范围', // 身份 / 构成
+    '走向', '指向', '埋设', '成熟度', // 大势的"可能导向"与伏笔的成熟度
+    '周期', '时间', // 节令
+    '值', '趋势', '说明', // 指标
+  ];
+  const 六层 = ['地域', '大势', '伏笔', '节令', '指标', '势力'] as const;
+  const 表里全部内容字段 = 六层.flatMap(层名 => [...内容字段键(取层(层名))]);
+  const 限定名 = [...字段动势.推进型, ...字段动势.结构型];
+  const 去限定 = (名: string) => (名.includes('.') ? 名.split('.').slice(1).join('.') : 名);
+  const 已归类 = [...new Set(限定名.map(去限定))].filter(名 => 表里全部内容字段.includes(名));
+
+  const 交集 = 字段动势.推进型.filter(名 => (字段动势.结构型 as readonly string[]).includes(名));
+  check('1) 推进型 ∩ 结构型 = 空集', 交集, []);
+  check('2) 并集恰好等于 L58 点名的六个字段', [...已归类].sort(), ['局势', '进展', '动向', '对外关系', '目标', '前情'].sort());
+  check('3a) 表里没有未归类的字段(加了新态势字段就会在这里报出名字)',
+    [...new Set(表里全部内容字段)].filter(名 => !已归类.includes(名) && !与动势无关.includes(名)), []);
+  check('3b) 两个名册不重叠(一个字段不可能既"每轮可动"又与动势无关)',
+    与动势无关.filter(名 => 已归类.includes(名)), []);
+  ok('事件不是(世界字段表)里的一层, 它的 演变 单独钉在推进型', 字段动势.推进型.includes('事件.演变') && !(字段动势.结构型 as readonly string[]).includes('事件.演变'));
+  ok('两类各自至少有一个字段(空表 = 这段提示词什么也没说)', 字段动势.推进型.length > 0 && 字段动势.结构型.length > 0);
+  ok('生成的文本与表一致', SYSTEM_PROMPT.includes(`**推进型**(${字段动势.推进型.join(' / ')})`) && SYSTEM_PROMPT.includes(`**结构型**(${字段动势.结构型.join(' / ')})`));
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);

@@ -397,6 +397,69 @@ console.log('\n[7] v2.5: 清单里只剩墓碑(2 已了结 / 0 进行中)时, �
   ok('墓碑只在只读清单里露面', 请求.includes('【已经了结的事(只读)】盐引亏空案结案、互市重开'));
 }
 
+console.log('\n[8] v2.8 §2: 完成日志报的是世界时钟的三态(用户原先分不清"本来就没事"与"卡住了")');
+{
+  // 三种形态各自的**事实**与**授权**必须一致: 跨了几天 → 事实说跨了几天 + 给大跳额度;
+  // 未跨日 / 时间不可解析 → 事实如实说, 且一个字都不提"大跳"(否则请求体自相矛盾)。
+  const 输出 = (时间: string, 小结 = '无事') => JSON.stringify({ 世界: { 时间, 氛围: '夜深了', 总览: '世界照常' }, 事件: [], 小结 });
+  async function 观察(做: () => Promise<void>) {
+    const 行: string[] = [];
+    const 原info = console.info;
+    console.info = (...args: any[]) => { 行.push(args.map(String).join(' ')); };
+    try {
+      await 做();
+    }
+    finally {
+      console.info = 原info;
+    }
+    const 完成行 = 行.filter(line => line.includes('世界推进完成'));
+    check('恰好一行完成日志', 完成行.length, 1);
+    return String(完成行[0] ?? '');
+  }
+
+  // ① 跨日: 正文写"三天后", 世界时间跟着跨 3 天。开局那一轮单列"首次推进"
+  {
+    const p = await 准备({ 生成序列: [输出('2025-11-15 21:30', '起手'), 输出('2025-11-18 21:30')] });
+    const 首轮 = await 观察(() => updateWorld(false));
+    ok('开局第一轮: 单列"首次推进"(不是误报成"时间不可解析")', 首轮.includes('世界推进完成: 首次推进（无上轮世界时间, 不计跨日）'));
+    const 首轮请求 = JSON.stringify(p.记录.raw[0]);
+    ok('开局第一轮: 请求体说的是"没有上轮世界时间", 且不给大跳',
+      首轮请求.includes('首次推进(没有上轮世界时间, 本轮不计跨日)') && !首轮请求.includes('大跳'));
+
+    p.floors['5'] = { role: 'assistant', message: '第五楼: 三天后, 集市又开张了。', is_hidden: false };
+    const 行 = await 观察(() => updateWorld(false));
+    ok('跨日: 日志首段就是世界时钟(跨了 3 世界日)', 行.includes('世界推进完成: 跨了 3 世界日'));
+    ok('跨日: 小结与两个桶照旧在后半段', 行.includes('(进行中 0 件 / 已了结 0 件, 新增 0 件)'));
+    const 请求 = JSON.stringify(p.记录.raw[1]);
+    ok('跨日: 请求体里的事实与授权一致(跨了 3 世界日 + 大跳额度生效)',
+      请求.includes('本轮跨日(脚本算出, 与上面那份时间约束同一规则): 跨 3 世界日') && 请求.includes('时间大跳跃放宽到 4 件'));
+  }
+
+  // ② 未跨日: 正文没有时间线索, 世界时间原样沿用
+  {
+    const p = await 准备({ 生成序列: [输出('2025-11-15 21:30', '起手'), 输出('2025-11-15 21:30')] });
+    await updateWorld(false);
+    p.floors['5'] = { role: 'assistant', message: '第五楼: 街上人多了些。', is_hidden: false };
+    const 行 = await 观察(() => updateWorld(false));
+    ok('未跨日: 日志说"未跨日（沿用上轮日期）"', 行.includes('世界推进完成: 未跨日（沿用上轮日期）'));
+    const 请求 = JSON.stringify(p.记录.raw[1]);
+    ok('未跨日: 请求体给出事实, 但不给大跳额度(不自动享有)', 请求.includes('本轮跨日(脚本算出') && 请求.includes('未跨日——世界.时间的日期必须沿用上次日期') && !请求.includes('大跳'));
+  }
+
+  // ③ 古代卡: 旧世界时间"元和三年·三月初七"解析不出来 → 整条降级成纯提示, 不许报成"未推进"
+  {
+    const p = await 准备({ 生成序列: [输出('元和三年·三月初七', '起手'), 输出('元和三年·三月初十')] });
+    await updateWorld(false);
+    p.floors['5'] = { role: 'assistant', message: '第五楼: 三天后, 城门开了。', is_hidden: false };
+    const 行 = await 观察(() => updateWorld(false));
+    ok('古代卡: 日志落第三态"时间不可解析, 无法判定"(不落成"未推进")', 行.includes('世界推进完成: 时间不可解析, 无法判定'));
+    ok('古代卡: 世界时间照旧落盘(推进本身没失败)', 取状态().世界.时间 === '元和三年·三月初十');
+    const 请求 = JSON.stringify(p.记录.raw[1]);
+    ok('古代卡: 请求体退回纯提示(无法判定 + 不提大跳)',
+      请求.includes('无法判定(上次世界时间的日期解析不出来, 本插件不按世界日计时)') && !请求.includes('大跳'));
+  }
+}
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 if (fail > 0)
   process.exit(1);

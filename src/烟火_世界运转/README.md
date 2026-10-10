@@ -186,7 +186,9 @@ import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/YanHuo@master/dist/烟火
 - **`dist` 必须一起带上。** 工作区不跟踪它、投影仓跟踪它。漏了会让 jsdelivr 继续发旧产物（`[bot] bundle` 能兜底重建，但中间态期间线上是旧的）。
 - **别把其他插件带过去。** 剧情导演 / 正文美化 / 直播弹幕 / 自定义状态栏不属于这个投影。
 - **`.github/workflows/` 只放 `bundle.yaml`。** 工作区里另有 `bump_deps.yaml` / `sync_template.yaml`，那是模板上游维护用的，两个投影仓都没有它们。
-- **`tests/platform-usage.mjs` 在投影仓里必然失败。** 它硬编码了四个项目（含 `src/剧情导演`），而投影仓没有该目录，`pnpm test` 最后那道「平台直连检查」会抛 `ENOENT`。这是既存问题、与本插件无关；`bundle.yaml` 只跑 `pnpm install && pnpm build`、不跑测试，所以不影响发布。
+- **`tests/platform-usage.mjs` 已兼容"缺项目"的投影仓。** 它扫的项目目录不存在就跳过（`statSync(..., { throwIfNoEntry: false })`），不再抛 `ENOENT`。所以投影仓里 `pnpm test` 最后那道「平台直连检查」不会因为它变红；**它红了就是真的出现了 `host.ts` 之外的平台直连**——那才是它要抓的东西。
+- **新克隆没有 git identity：`commit` 会失败，而 `push` 会撒谎。** 投影检出是全新克隆，本地与全局都没配 `user.name` / `user.email` 时，`git commit` 直接 `exit 128`（`Author identity unknown`）；**紧接着的 `git push` 会报 `Everything up-to-date`** —— 看起来像推成功了，其实根本没产生提交（工作树还是脏的）。先设本地身份（`git -C <检出> config user.name "..."` 与 `user.email "..."`，**只写本地、别加 `--global`**）再提交。
+- **判断推没推上去，看 `rev-parse` / `ls-remote`，不看 `push` 的输出。** `Everything up-to-date`、`Already up to date.` 都可能出现在"什么都没发生"的场景里。推完用 `git -C <检出> rev-parse HEAD` 与 `git -C <检出> ls-remote origin master` 对一次，两边一致、且 `status --porcelain` 为空，才算真的落地。
 - **jsdelivr 有缓存。** `@master` 是非版本号引用，缓存较久；`[bot] bundle` 会自动打版本 tag，把刷新压到 12 小时内。要立刻验证，就用 **commit hash 或 tag** 直接 import。
 
 > 🤖 该仓库有 `[bot] bundle` 工作流：推源后机器人会自动 `rm -rf dist && pnpm install && pnpm build` 并补一个提交，所以即使偶尔漏提交 dist 也会被兜底重建；但它只重建**仓内存在 `index.ts` 的插件**，而产物由 `webpack.config.ts:54` 的 `globSync('{示例,src}/**/index.{ts,tsx,js,jsx}')` 决定。

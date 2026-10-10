@@ -101,6 +101,12 @@ function 扫一个项目(项目) {
 let 总计 = 0;
 let 总文件数 = 0;
 for (const 一个 of 项目) {
+  // 投影仓只含部分项目(例如 BiFang 只有彼方、YanHuo 没有剧情导演), 缺目录就跳过,
+  // 不要抛 ENOENT —— 否则整道「平台直连检查」会因为一个与平台调用无关的原因变红。
+  if (!statSync(一个.目录, { throwIfNoEntry: false })) {
+    console.log(`\n【${一个.名}】不在本仓（投影仓只含部分项目），跳过`);
+    continue;
+  }
   const 结果 = 扫一个项目(一个);
   console.log(`\n【${一个.名}】除 host.ts 之外的平台直连:`);
   if (结果.length === 0)

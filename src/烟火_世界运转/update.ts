@@ -151,7 +151,7 @@ export async function updateWorld(force = false): Promise<void> {
           includeGlobal: settings.运转.读取全局世界书,
         })
       : '';
-    const messages = buildTickMessages({ world: data, reply, replyCount: recent.length, context, timeJump, 时间约束: 时间约束.提示, worldbook, playerName, playerDesc, 破限: settings.运转.破限, 头部填充: settings.运转.头部填充, 头部填充文本: settings.运转.头部填充文本 ?? '', 防截断: settings.运转.防截断, 预填充: settings.运转.预填充, 节令历法: settings.运转.节令历法, 世界指标: settings.运转.世界指标 });
+    const messages = buildTickMessages({ world: data, reply, replyCount: recent.length, context, timeJump, 时间约束: 时间约束.提示, worldbook, playerName, playerDesc, 破限: settings.运转.破限, 头部填充: settings.运转.头部填充, 头部填充文本: settings.运转.头部填充文本 ?? '', 防截断: settings.运转.防截断, 预填充: settings.运转.预填充, 节令历法: settings.运转.节令历法, 世界指标: settings.运转.世界指标, 世界密度: settings.运转.世界密度 });
     debugStore.record({
       time: Date.now(),
       model: settings.接口.模型,

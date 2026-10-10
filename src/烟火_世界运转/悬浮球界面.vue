@@ -1431,6 +1431,19 @@ const scaleLabel: Record<string, string> = { 要事: '要事', 大事: '大事' 
                 </div>
                 <div class="yh-field-pair">
                   <label class="yh-field">
+                    <span class="yh-field-label">运转密度</span>
+                    <select v-model="settings.运转.世界密度" class="yh-input yh-select">
+                      <option value="稀疏">稀疏——允许长时间没有新事件</option>
+                      <option value="正常">正常——每轮主动找，找不到才静止</option>
+                      <option value="密集">密集——每轮尽量都有产出</option>
+                    </select>
+                    <span class="yh-field-label" style="font-weight: 400; color: var(--yh-ink-faint)"
+                      >稀疏=允许长时间没有新事件；正常=每轮主动找，找不到才静止；密集=每轮尽量都有产出。只调配额，不改事件合格线。</span
+                    >
+                  </label>
+                </div>
+                <div class="yh-field-pair">
+                  <label class="yh-field">
                     <span class="yh-field-label">快照保留份数</span>
                     <input
                       v-model.number="settings.运转.快照保留份数"

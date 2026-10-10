@@ -126,26 +126,74 @@ user:   任务 (世界状态/最近剧情/正文/世界书)
 
 无脚本按钮——所有手动操作都在面板里。
 
-## 发布到 GitHub（重要 · 别忘了）
+## 仓库与发布（重要 · 动手前先读这一节）
 
-本项目发布到 **`https://github.com/ninin99537-commits/YanHuo`**（别名 **YanHuo**）。用户通过 jsdelivr 直接 import 该仓库的发行产物：
+### 三个仓库
+
+| 仓库 | 是什么 | `src/` 里装什么 | 谁是主场 |
+| ---- | ---- | ---- | ---- |
+| **工作区**（你本地这份目录） | 全量开发工作区 | 8 个插件 | —— |
+| **YanHuo** `ninin99537-commits/YanHuo` | **烟火的官方发布仓**（投影仓） | 烟火全量 + 共用 + **彼方全量** | **烟火** |
+| **BiFang** `ninin99537-commits/BiFang` | 彼方的官方发布仓（投影仓） | 彼方全量 + 共用 + 烟火的 4 文件残桩 | 彼方 |
+
+用户通过 jsdelivr 直接 import **YanHuo** 的发行产物：
 
 ```
 import 'https://cdn.jsdelivr.net/gh/ninin99537-commits/YanHuo@master/dist/烟火_世界运转/index.js';
 ```
 
-**上传前**：
-1. 改动源码（`src/烟火_世界运转/**`，涉及共用时连 `src/共用/**` 一起）。
-2. `pnpm build`，确认 `dist/烟火_世界运转/index.js`（+ `.js.map`）重新生成、含你的改动。
-3. 提交内容 = **源码改动 + 重新构建的 `dist/烟火_世界运转/index.js`**（这个仓库 git 跟踪 dist，jsdelivr 导入的正是它）。
-4. 推送到 `YanHuo` 的 `master`（fast-forward，一格一提交）。
+### ⚠️ 为什么不能直接 `git push`
 
-> 🤖 该仓库有 `[bot] bundle` 工作流：推源后机器人会自动重建 dist 并补一个提交。所以即使
-> 偶尔漏提交 dist，机器人也会兜底重建；但**仍建议手动提交最新 dist**，避免中间态。
+工作区的 `git remote -v` **只有一个 `origin`，而它恰好就指向 YanHuo**——看着像"推 origin 就发布了"，**但并不是**：
+
+1. **投影仓不是工作区的镜像。** 工作区 `src/` 下有 8 个插件，YanHuo 只装 3 个。直接推会把剧情导演 / 正文美化 / 直播弹幕 / 自定义状态栏一并带过去。
+2. **两者历史已经分叉。** 工作区与 `origin/master` 各有独有提交（实测 `git rev-list --left-right --count HEAD...origin/master` = `223 20`），普通 push 会被拒。
+3. **`dist/` 的跟踪状态相反。** 工作区 `.gitignore` 里写着 `dist`（不跟踪），而两个投影仓都**跟踪** `dist/`——jsdelivr 导入的正是它。
+
+所以发布 = **投影**：把文件复制到目标仓的检出里，在那里重新提交、再推。**不是** push 工作区。
+
+### 投影怎么做（照抄）
+
+1. 把 YanHuo 克隆到工作区**之外**（或工作区内一个不被跟踪的目录，如 `.work/`）：
+
+   ```bash
+   git clone https://github.com/ninin99537-commits/YanHuo.git <工作区外>/YanHuo-recon
+   ```
+
+2. `pnpm build`，确认 `dist/烟火_世界运转/index.js`（+ `.js.map`）重新生成、含你的改动。
+
+3. 从工作区**复制**下列内容到检出：
+
+   | 复制什么 | 说明 |
+   | ---- | ---- |
+   | `src/烟火_世界运转/**` | 本插件全部源码 |
+   | `src/共用/**` | 两家共用（4 个文件），**有改动才需要** |
+   | `tests/**` | 公共骨架 4 个（`build.mjs` / `run.mjs` / `platform-usage.mjs` / `tag-filter.test.ts`）+ 本插件全部 `*.test.ts` |
+   | `dist/烟火_世界运转/index.js` + `.js.map` | 第 2 步的产物 |
+   | `docs/仓库首页-烟火.md` | **改名为 `README.md`**（投影仓的首页就是它） |
+   | `docs/superpowers/specs/**` | 本插件的设计稿 |
+
+4. 在检出里提交并推送：
+
+   ```bash
+   git -C <检出> add -A
+   git -C <检出> commit -m "..."
+   git -C <检出> push origin master
+   ```
+
+### 陷阱清单
+
+- **`dist` 必须一起带上。** 工作区不跟踪它、投影仓跟踪它。漏了会让 jsdelivr 继续发旧产物（`[bot] bundle` 能兜底重建，但中间态期间线上是旧的）。
+- **别把其他插件带过去。** 剧情导演 / 正文美化 / 直播弹幕 / 自定义状态栏不属于这个投影。
+- **`.github/workflows/` 只放 `bundle.yaml`。** 工作区里另有 `bump_deps.yaml` / `sync_template.yaml`，那是模板上游维护用的，两个投影仓都没有它们。
+- **`tests/platform-usage.mjs` 在投影仓里必然失败。** 它硬编码了四个项目（含 `src/剧情导演`），而投影仓没有该目录，`pnpm test` 最后那道「平台直连检查」会抛 `ENOENT`。这是既存问题、与本插件无关；`bundle.yaml` 只跑 `pnpm install && pnpm build`、不跑测试，所以不影响发布。
+- **jsdelivr 有缓存。** `@master` 是非版本号引用，缓存较久；`[bot] bundle` 会自动打版本 tag，把刷新压到 12 小时内。要立刻验证，就用 **commit hash 或 tag** 直接 import。
+
+> 🤖 该仓库有 `[bot] bundle` 工作流：推源后机器人会自动 `rm -rf dist && pnpm install && pnpm build` 并补一个提交，所以即使偶尔漏提交 dist 也会被兜底重建；但它只重建**仓内存在 `index.ts` 的插件**，而产物由 `webpack.config.ts:54` 的 `globSync('{示例,src}/**/index.{ts,tsx,js,jsx}')` 决定。
 > 推送被拒（non-fast-forward）时，多半是机器人刚补过一行：`git rebase origin/master` 后再推。
 
-> ⚠️ `YanHuo` 仓库同时发布烟火与彼方两个插件（`dist/烟火_世界运转/` 和 `dist/彼方_NPC幕后生命状态系统/` 都在里面）；
-> 写有彼方相关改动要传时，它的「官方发布仓库」其实是 `BiFang`，别传混了。
+> ⚠️ `YanHuo` 里同时有**彼方全量源码**（历史沿革），所以它的 `dist/` 里也会构建出彼方产物。
+> 但写有彼方改动要发布时，**去 `BiFang`**——那才是彼方的官方发布仓库；YanHuo 里这份彼方副本不保证同步。
 
 ---
 

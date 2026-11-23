@@ -1,0 +1,66 @@
+node_modules
+
+.DS_Store
+Thumbs.db
+
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+auto-imports.d.ts
+components.d.ts
+
+# 构建产物
+dist
+
+# CodeGraph 索引(本地 SQLite, 不进仓库)
+.codegraph/
+
+# 用例的临时打包产物(pnpm test 生成)
+tests/.build/
+
+# 类型检查门的串行锁（运行期产物，跑完自动删；不该进仓库）
+tests/.typecheck-gate.lock
+
+# 临时探针脚本(用完即删, 不提交)
+tests/.probe-*.mjs
+
+# 本地临时文件
+tools/*.png
+tools/*.txt
+tools/*.log
+
+# tool hook state (not source)
+.mimosa/
+
+# AI 会话的工作目录(侦察/投影检出/复核产物; .work 会到几百 MB, 入库是事故)
+/.work/
+/.team/
+/_verify/
+
+# 根目录的一次性脚本与报告(用完即删; 真工具放 tools/)
+/*.py
+/_validate_report.txt
+/slash_command.txt
+
+# ── 只保留项目本身 ──────────────────────────────────────────────
+# 下面这些都是编辑器 / 协作 / 模板脚手架的残留, 与项目无关, 一律不进仓库
+# (`.cursor/mcp.json` 曾把 Figma 令牌带进公开仓库, 这条规则就是从那次事故来的)
+.cursor/
+.agents/
+.vscode/
+.mcp.json
+reviews/
+reports/
+tavern_sync.mjs
+tavern_sync.yaml
+dump_schema.ts
+
+# 工具/临时残留
+.agentxt-on
+.agentxt-off
+tmp/
+_backup/
+.kilo/

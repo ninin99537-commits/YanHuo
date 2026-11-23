@@ -1,0 +1,95 @@
+import { useHost } from './host';
+import { buildInjectionPrompt } from './prompts';
+import type { Settings, WorldData } from './schema';
+import { WORLDBOOK_ENTRY_NAME } from './state';
+import { 有世界数据 } from './世界数据';
+import { toastWarning } from './toast';
+
+function isYanhuoEntry(entry: any): boolean {
+  return entry?.name === WORLDBOOK_ENTRY_NAME || entry?.comment === WORLDBOOK_ENTRY_NAME || entry?.extra?.yanhuo === true;
+}
+
+/** 数据库脚本(ACU)剧情推进的"条目屏蔽"关键词：命中则条目不进剧情推进上下文 */
+const ACU_BLOCKED_KEYWORDS = ['规则', '思维链', 'cot', 'MVU', 'mvu', '变量', '状态', 'Status', 'Rule', 'rule', '检定', '判断', '叙事', '文风', 'InitVar', '格式'];
+
+/** 若条目名命中 ACU 屏蔽词, 改回安全条目名, 否则保留现有名 */
+function sanitizeEntryName(currentName: string): string {
+  const name = String(currentName || '').trim();
+  return ACU_BLOCKED_KEYWORDS.some(keyword => name.includes(keyword)) ? WORLDBOOK_ENTRY_NAME : name;
+}
+
+let warnedNoWorldbook = false;
+
+export interface 世界书同步结果 {
+  状态: '已同步' | '已停用' | '待同步';
+  说明: string;
+}
+
+/**
+ * 沿用原有目标：把当前聊天的世界动向写入角色卡主世界书。
+ * 切聊天时覆盖烟火自己的那一条；其它条目与 AM 条目一律不碰。
+ * 不自动创建、重绑世界书；仅把同步结果如实交给调用方。
+ */
+export async function syncWorldbookEntry(data: WorldData, enabled: boolean, settings: Settings, 仍属当前: () => boolean = () => true): Promise<世界书同步结果> {
+  try {
+    const host = useHost();
+    let wbName: string | null = null;
+    try { wbName = host.worldbook.boundNames().primary ?? null; } catch { wbName = null; }
+    if (!wbName) {
+      if (enabled && !warnedNoWorldbook) {
+        warnedNoWorldbook = true;
+        toastWarning('当前角色卡没有绑定主世界书，世界快照不受影响；请先绑定主世界书以同步公开摘要。', '烟火');
+      }
+      return { 状态: enabled ? '待同步' : '已停用', 说明: '当前角色卡未绑定主世界书，未自动创建或重绑' };
+    }
+    // 五层档案(地区/形势/暗线/日程/指标)也算世界已有数据——否则只推了五层还没长事件时会被误判"世界为空"误删条目。
+    // 这条判据与面板空态、启动补读共用同一份(以前三个地方各抄一遍, 抄歪一次就误删条目)。
+    if (!仍属当前()) return { 状态: '待同步', 说明: '聊天、分支或世界修订已变化，本次旧投影未写入主世界书' };
+    if (!enabled || !有世界数据(data)) {
+      await useHost().worldbook.remove(wbName, isYanhuoEntry);
+      return { 状态: '已同步', 说明: '公开摘要已关闭或当前无公开数据，烟火条目已移除' };
+    }
+    const content = buildInjectionPrompt(data, settings);
+    const existing = (await useHost().worldbook.entries(wbName)).find(isYanhuoEntry);
+    if (!仍属当前()) return { 状态: '待同步', 说明: '聊天、分支或世界修订已变化，本次旧投影未写入主世界书' };
+    if (existing) {
+      // 保留其它字段, 只刷新内容; 确保防递归开启; 名字若命中 ACU 屏蔽词则改回安全名
+      await useHost().worldbook.update(wbName, wb =>
+        wb.map(entry =>
+          isYanhuoEntry(entry)
+            ? {
+                ...entry,
+                name: sanitizeEntryName(entry.name || WORLDBOOK_ENTRY_NAME),
+                content,
+                recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
+              }
+            : entry,
+        ),
+      );
+    } else {
+      // 条目被删除/改名后找不到, 重新创建
+      await useHost().worldbook.create(wbName, [
+        {
+          name: WORLDBOOK_ENTRY_NAME,
+          content,
+          enabled: true,
+          probability: 100,
+          strategy: {
+            type: 'constant',
+            keys: [],
+            keys_secondary: { logic: 'not_any', keys: [] },
+            scan_depth: 'same_as_global',
+          },
+          position: { type: 'after_character_definition', role: 'system', depth: 0, order: 100 },
+          recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
+          extra: { yanhuo: true },
+        },
+      ]);
+    }
+    warnedNoWorldbook = false;
+    return { 状态: '已同步', 说明: `公开摘要已同步到角色卡主世界书「${wbName}」` };
+  } catch (error) {
+    console.error('[烟火] 同步世界动向到世界书失败:', error);
+    return { 状态: '待同步', 说明: `世界书同步未完成：${error instanceof Error ? error.message : String(error)}` };
+  }
+}

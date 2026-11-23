@@ -1,0 +1,53 @@
+{
+  "compilerOptions": {
+    "types": [
+      "jquery",
+      "jqueryui",
+      "lodash",
+      "toastr",
+      "type-fest",
+      "yaml",
+      "zod",
+    ],
+    "target": "ESNext",
+    "module": "ESNext",
+    "rootDir": ".",
+    "outDir": "dist",
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    },
+    "moduleDetection": "auto",
+    "moduleResolution": "bundler",
+    "allowUmdGlobalAccess": true,
+    "allowSyntheticDefaultImports": true,
+    "strictBindCallApply": true,
+    "allowJs": true,
+    "checkJs": false,
+    "sourceMap": true,
+    "strict": true,
+    "jsx": "react-jsx",
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    /** 只检查我们自己的代码, 不检查 node_modules 里的 .d.ts。
+     *  理由: @vueuse/core 的 d.ts 引用了 `BluetoothLEScanFilter` / `BluetoothDevice` 等
+     *  **Web Bluetooth API 的类型**, 而本项目的 `types` 里没有 (也不需要) 引入 `@types/web-bluetooth`。
+     *  那不是我们的错, 也不影响运行 (我们从不调用那部分 API), 但会让 `pnpm typecheck` 永远红着 ——
+     *  于是这条命令又变成"需要二次解释"的东西。关掉它, 留下的每一条错都在我们自己的代码里。 */
+    "skipLibCheck": true
+  },
+  "include": [
+    "@types",
+    "src",
+    "*.d.ts",
+  ],
+  "exclude": [
+    "**/dist/**",
+    "**/node_modules/**",
+  ]
+}

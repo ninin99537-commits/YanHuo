@@ -576,7 +576,16 @@ function toggleTrail(key: string) {
           d="M12 2.8c.6 3 3.9 4.9 4.9 8.4 1 3.7-1.5 8-4.9 8s-5.9-2.8-5.4-6.3c.3-2 1.6-3.2 2.4-4.6.3 1.3.9 2.1 1.8 2.5-.5-3 .1-5.6 1.2-8Z"
         />
       </svg>
-      <span v-if="进行中件数 > 0 && !updatingActive" class="yh-orb-count">{{ 进行中件数 > 99 ? '99+' : 进行中件数 }}</span>
+      <!-- ⚠ 2026-11-23（需求方 #894）：**不再显示件数，只做一个圆点。**
+           件数本身没丢 —— 面板顶部导航本来就有「动态 N」。
+           球上只需要"有/没有"这个二值信号。
+           title / aria-label 把件数留给鼠标悬停与读屏（信息不丢，只是不画在球上）。 -->
+      <span
+        v-if="进行中件数 > 0 && !updatingActive"
+        class="yh-orb-count"
+        :title="`有 ${进行中件数} 条进行中的世界事件`"
+        aria-label="有进行中的世界事件"
+      ></span>
     </button>
 
     <!-- 面板: 窄而高的浮动简报, 一页从上读到下(概况 → 所在地 → 近期日程 → 数据变化 → 动态 → 组织 → 档案);
@@ -945,6 +954,11 @@ function toggleTrail(key: string) {
                     />
                   </label>
                 </div>
+                <!-- ⚠ 2026-11-23（需求方 #885）：这两项原来**各自**包在一个只有一个孩子的
+                     `.yh-field-pair` 里。而 `.yh-field-pair` 是**两列网格**：
+                       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                     ⇒ 第一列填上、第二列空着 = **右边空半行**（用户看着别扭）。
+                     合成一个 pair，两个字段并排。**只动结构，不动文案、不动控件、不动 v-model。** -->
                 <div class="yh-field-pair">
                   <label class="yh-field">
                     <span class="yh-field-label">运转密度</span>
@@ -957,8 +971,6 @@ function toggleTrail(key: string) {
                       >稀疏=允许长时间没有新事件；正常=每轮主动找，找不到才静止；密集=每轮尽量都有产出。只调配额，不改事件合格线。</span
                     >
                   </label>
-                </div>
-                <div class="yh-field-pair">
                   <label class="yh-field">
                     <span class="yh-field-label">快照保留份数</span>
                     <input
@@ -1707,8 +1719,25 @@ function toggleTrail(key: string) {
     transition: border-color 0.18s ease-out;
 
     .yh-orb-mark {
+      // ⚠ 2026-11-23（需求方 #894）：**回正中心，恢复 20px，去掉 translate。**
+      //
+      //   ── 上一版为什么错 ──
+      //
+      //   上一版为了给角标腾地方，写了 `transform: translate(-2px, 2px)` ——
+      //   **那等于用「logo 不居中」换「不重叠」。** 用户原话：
+      //   > 悬浮球的修法，是把 logo 往左边移动？这也太丑了，**logo 都不居中！**
+      //
+      //   ── 正确的做法 ──
+      //
+      //   角标改成 **6px 圆点、不显示件数** ⇒ 它占的地方小到不需要 logo 让位。
+      //   件数本身没丢：面板顶部导航本来就有「动态 N」。
+      //   **球上只需要"有/没有"这个二值信号。**
+      //
+      //   ⚠ **居中是靠 `place-items: center`（在 `.yh-orb` 上），不是靠位移去凑。**
+      //     判据 `yanhuo-orb-logo-居中.test.ts` 会拦住任何 `translate` 位移。
       width: 20px;
       height: 20px;
+      // 保留：管的是火焰摆动动画的原点，**不是位置偏移**
       transform-origin: 50% 80%;
     }
     // 推进中的转圈弧: 画在边线以内(面板关着时 iframe 只有一个球那么大, 圆外会被裁掉)
@@ -1738,18 +1767,32 @@ function toggleTrail(key: string) {
     fill: currentColor;
   }
   // 进行中件数: 圆里面的右上角(同上, 圆外会被裁)
+  //
+  // ⚠ 2026-11-23（需求方 #894）：**改成 6px 圆点，不显示件数。**
+  //
+  //   ── 为什么不显示数字 ──
+  //
+  //   件数本身没丢 —— 面板顶部导航本来就有「动态 N」。
+  //   **球上只需要"有/没有"这个二值信号。** 这样它占的地方小到不需要 logo 让位。
+  //
+  //   ── 为什么 top/right 是 6px 而不是 5 ──
+  //
+  //   6px 圆点在 (34,6)，**外角**离圆心 = √(14² + 14²) = **19.8 ≤ 20** ⇒ 刚好在圆内。
+  //   5px 就出圆了（√(15² + 15²) = 21.2 > 20）—— 会被 iframe 裁掉一角。
+  //   **⚠ 这个 6 是算出来的，不是拍的。**
+  //
+  //   ── 硬约束：必须在圆内 ──
+  //
+  //   面板关着时 iframe 只有一个球那么大，圆外的会被裁掉（见 .yh-orb 注释）。
   .yh-orb-count {
     position: absolute;
-    top: 5px;
-    right: 5px;
-    min-width: 14px;
-    height: 14px;
-    padding: 0 3px;
-    border-radius: 999px;
+    top: 6px;
+    right: 6px;
+    width: 6px;
+    height: 6px;
+    padding: 0;
+    border-radius: 50%;
     background: var(--yh-accent);
-    color: var(--yh-on-accent);
-    font: 700 9px/14px var(--yh-sans);
-    text-align: center;
     box-shadow: 0 0 0 2px var(--yh-panel);
     pointer-events: none;
   }

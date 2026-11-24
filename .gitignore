@@ -12,9 +12,6 @@ pnpm-debug.log*
 auto-imports.d.ts
 components.d.ts
 
-# 构建产物
-dist
-
 # CodeGraph 索引(本地 SQLite, 不进仓库)
 .codegraph/
 

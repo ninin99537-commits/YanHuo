@@ -4,7 +4,7 @@
  * 主 AI 读到什么, 世界引擎就读到什么; 主 AI 匹配不到的条目, 世界引擎也读不到。
  *
  * 默认只读角色卡绑定世界书(主 + 附加)与聊天世界书; 全局世界书由设置开关控制(默认关)。
- * 烟火自己写入的条目自动排除; 彼方等其它条目照常读取(它们也是世界的一部分)。
+ * 烟火自己与彼方/剧情导演等插件写入的常驻条目均自动排除（避免自我反馈与重复注入；烟火联动彼方走 彼方联动.ts 的公域切片通道）。
  *
  * 条目内容本身的求值(ACU 模板 <if>、EJS、酒馆宏、助手变量宏、其余语法清理)不在这里 ——
  * 那约 400 行与彼方同源, 已收进 共用/条目求值.ts, 这里只剩**读哪几本世界书、排除谁**这份策略,
@@ -37,8 +37,7 @@ import {
 // 排除名单的判定与日志措辞: 与彼方/剧情导演同一份(共用/世界书排除.ts)
 import { 命中排除, 条目标签, 排除说明, 是别的插件条目 } from '../共用/世界书排除';
 
-/** 自动排除的世界书条目特征(名字/内容开头): 仅烟火自己写入的条目——不把自身输出当设定。
- * 彼方等其它插件的条目不排除: 它们也是世界的一部分, 与主 AI 读到的保持一致 */
+/** 自动排除的烟火自身世界书条目特征(名字/内容开头)；其它插件常驻条目由 是别的插件条目(entry, '烟火') 统一排除 */
 const SELF_EXCLUDE_MARKS = ['【烟火】世界动向', '[烟火 · 世界动向]'];
 
 /** AM 编码的合法形态: AM + 4 位以上数字(与 剧情导演/记忆检索 同一套契约) */
@@ -61,9 +60,8 @@ function 烟火求值环境(选项: { 严格模式: boolean; 禁用缓存: boole
         EJS语法错误: text => useHost().ejs.syntaxError(text),
         展开酒馆宏: text => useHost().macros.expand(text),
         取助手变量: option => useHost().vars.get(option),
-        // 烟火现行实现里空表头会让 `列名.includes('')` 恒真(命中第 0 列), 彼方那份多了个 `h &&` 不会;
-        // 两份本来就不一致, 照抄现状 —— 不在这里顺手统一。
-        空表头也算命中: true,
+        // 与彼方统一：空表头列不参与模糊匹配，防止 `<if cell:...>` 误命中空表头第 0 列
+        空表头也算命中: false,
         // 2026-11-01: 严格(失败关闭)与不跨轮复用缓存。包装接口显式传 false, 行为与以前一致。
         严格模式: 选项.严格模式,
         禁用缓存: 选项.禁用缓存,
@@ -166,7 +164,7 @@ function 取AM关键词(entry: any): string[] {
     return out;
 }
 
-/** 本轮要扫的世界书: 角色主 + 附加 + 聊天 + (可选)全局, 按名字去重 */
+/** 本轮要扫的世界书: 角色主 + 附加 + 群聊成员世界书 + 聊天 + (可选)全局, 按名字去重 */
 function 收集书名(includeGlobal: boolean): string[] {
     const names: string[] = [];
     const push = (name: unknown) => {
@@ -182,6 +180,17 @@ function 收集书名(includeGlobal: boolean): string[] {
     }
     catch {
         // 未打开角色卡时忽略
+    }
+    try {
+        for (const 成员 of useHost().worldbook.groupMemberNames?.() ?? []) {
+            const 成员绑定 = useHost().worldbook.boundNamesOf?.(成员);
+            push(成员绑定?.primary);
+            for (const name of 成员绑定?.additional ?? [])
+                push(name);
+        }
+    }
+    catch {
+        // 单聊或群成员不可读时忽略
     }
     try {
         push(useHost().worldbook.chatName());

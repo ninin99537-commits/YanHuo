@@ -7,6 +7,7 @@ import { syncWorldbookEntry } from './inject';
 import { useHost } from './host';
 import { 有世界数据 } from './世界数据';
 import { 版本标签 } from './版本';
+import { createTextFilter } from '../共用/楼层标签过滤';
 import './悬浮球界面';
 
 setActivePinia(pinia);
@@ -76,9 +77,10 @@ async function handleMessageReceived(message_id: number) {
   try {
     const latest = useHost().chat.messages(message_id).at(-1);
     if (!latest || latest.role !== 'assistant' || latest.is_hidden) return;
-    const replyText = String(latest.message || '').replace(/\s+/g, '').trim();
+    const filter = createTextFilter(settings.标签);
+    const replyText = filter(String(latest.message || '')).replace(/[\r\n\t]+/g, '').trim();
     if (replyText.length < 500) {
-      console.warn(`[烟火] 最新正文回复过短(${replyText.length}字), 疑似被截断, 已跳过本次自动推进`);
+      console.warn(`[烟火] 最新正文回复过短(过滤后 ${replyText.length}字), 疑似被截断, 已跳过本次自动推进`);
       return;
     }
     const frequency = Math.max(1, settings.运转.更新频率);

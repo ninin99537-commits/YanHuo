@@ -4,6 +4,7 @@ import type { Settings, WorldData } from './schema';
 import { WORLDBOOK_ENTRY_NAME } from './state';
 import { 有世界数据 } from './世界数据';
 import { toastWarning } from './toast';
+import { 串行写世界书 } from '../共用/世界书锁';
 
 function isYanhuoEntry(entry: any): boolean {
   return entry?.name === WORLDBOOK_ENTRY_NAME || entry?.comment === WORLDBOOK_ENTRY_NAME || entry?.extra?.yanhuo === true;
@@ -25,69 +26,119 @@ export interface 世界书同步结果 {
   说明: string;
 }
 
+/** 收集现有已绑定的世界书名（不新建书），供关闭开关/清空时清理 */
+function 收集可清理世界书(host: ReturnType<typeof useHost>): string[] {
+  const names: string[] = [];
+  try {
+    const primary = host.worldbook.boundNames().primary;
+    if (primary) names.push(primary);
+  } catch { /* ignore */ }
+  try {
+    const chat = host.worldbook.chatName?.();
+    if (chat && !names.includes(chat)) names.push(chat);
+  } catch { /* ignore */ }
+  return names;
+}
+
 /**
- * 沿用原有目标：把当前聊天的世界动向写入角色卡主世界书。
+ * 把当前聊天的世界动向写入目标世界书（默认角色卡主世界书，也可在设置里切为聊天世界书以支持群聊与每聊隔离）。
  * 切聊天时覆盖烟火自己的那一条；其它条目与 AM 条目一律不碰。
- * 不自动创建、重绑世界书；仅把同步结果如实交给调用方。
+ * 写入全程经跨插件串行锁，避免与彼方同时改写同一本世界书互相覆盖。
  */
 export async function syncWorldbookEntry(data: WorldData, enabled: boolean, settings: Settings, 仍属当前: () => boolean = () => true): Promise<世界书同步结果> {
   try {
     const host = useHost();
-    let wbName: string | null = null;
-    try { wbName = host.worldbook.boundNames().primary ?? null; } catch { wbName = null; }
-    if (!wbName) {
-      if (enabled && !warnedNoWorldbook) {
-        warnedNoWorldbook = true;
-        toastWarning('当前角色卡没有绑定主世界书，世界快照不受影响；请先绑定主世界书以同步公开摘要。', '烟火');
-      }
-      return { 状态: enabled ? '待同步' : '已停用', 说明: '当前角色卡未绑定主世界书，未自动创建或重绑' };
-    }
-    // 五层档案(地区/形势/暗线/日程/指标)也算世界已有数据——否则只推了五层还没长事件时会被误判"世界为空"误删条目。
-    // 这条判据与面板空态、启动补读共用同一份(以前三个地方各抄一遍, 抄歪一次就误删条目)。
-    if (!仍属当前()) return { 状态: '待同步', 说明: '聊天、分支或世界修订已变化，本次旧投影未写入主世界书' };
+    const 目标 = settings.运转?.世界书写入目标 ?? '角色卡主世界书';
+    if (!仍属当前()) return { 状态: '待同步', 说明: '聊天、分支或世界修订已变化，本次旧投影未写入世界书' };
+
+    // 停用或无世界数据时：从已有世界书里清理烟火条目，不新建世界书
     if (!enabled || !有世界数据(data)) {
-      await useHost().worldbook.remove(wbName, isYanhuoEntry);
+      const 清理书 = 收集可清理世界书(host);
+      if (清理书.length === 0) {
+        return { 状态: enabled ? '待同步' : '已停用', 说明: '当前未绑定世界书，无需清理' };
+      }
+      for (const name of 清理书) {
+        await 串行写世界书(name, async () => {
+          if (!仍属当前()) return;
+          await useHost().worldbook.remove(name, isYanhuoEntry);
+        });
+      }
       return { 状态: '已同步', 说明: '公开摘要已关闭或当前无公开数据，烟火条目已移除' };
     }
-    const content = buildInjectionPrompt(data, settings);
-    const existing = (await useHost().worldbook.entries(wbName)).find(isYanhuoEntry);
-    if (!仍属当前()) return { 状态: '待同步', 说明: '聊天、分支或世界修订已变化，本次旧投影未写入主世界书' };
-    if (existing) {
-      // 保留其它字段, 只刷新内容; 确保防递归开启; 名字若命中 ACU 屏蔽词则改回安全名
-      await useHost().worldbook.update(wbName, wb =>
-        wb.map(entry =>
-          isYanhuoEntry(entry)
-            ? {
-                ...entry,
-                name: sanitizeEntryName(entry.name || WORLDBOOK_ENTRY_NAME),
-                content,
-                recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
-              }
-            : entry,
-        ),
-      );
+
+    let wbName: string | null = null;
+    if (目标 === '聊天世界书') {
+      try {
+        wbName = (await host.worldbook.getOrCreateChat?.()) ?? host.worldbook.chatName?.() ?? null;
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return { 状态: '待同步', 说明: `获取或创建聊天世界书失败：${msg}` };
+      }
+      if (!wbName) {
+        if (!warnedNoWorldbook) {
+          warnedNoWorldbook = true;
+          toastWarning('未能取到当前聊天的世界书，世界快照不受影响；请先在聊天上绑定一本世界书。', '烟火');
+        }
+        return { 状态: '待同步', 说明: '未能取到当前聊天的世界书' };
+      }
     } else {
-      // 条目被删除/改名后找不到, 重新创建
-      await useHost().worldbook.create(wbName, [
-        {
-          name: WORLDBOOK_ENTRY_NAME,
-          content,
-          enabled: true,
-          probability: 100,
-          strategy: {
-            type: 'constant',
-            keys: [],
-            keys_secondary: { logic: 'not_any', keys: [] },
-            scan_depth: 'same_as_global',
-          },
-          position: { type: 'after_character_definition', role: 'system', depth: 0, order: 100 },
-          recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
-          extra: { yanhuo: true },
-        },
-      ]);
+      try { wbName = host.worldbook.boundNames().primary ?? null; } catch { wbName = null; }
+      if (!wbName) {
+        const 群聊 = (host.worldbook.groupMemberNames?.().length ?? 0) > 0;
+        const 提示 = 群聊
+          ? '群聊里没有「当前角色卡」，写不进角色卡主世界书；请把烟火设置里的「写入世界书」改成「聊天世界书」。'
+          : '当前角色卡没有绑定主世界书，世界快照不受影响；请先绑定主世界书，或把「写入世界书」改成「聊天世界书」。';
+        if (!warnedNoWorldbook) {
+          warnedNoWorldbook = true;
+          toastWarning(提示, '烟火');
+        }
+        return { 状态: '待同步', 说明: 群聊 ? '群聊无法写入角色卡主世界书，请改用「聊天世界书」' : '当前角色卡未绑定主世界书，未自动创建或重绑' };
+      }
     }
-    warnedNoWorldbook = false;
-    return { 状态: '已同步', 说明: `公开摘要已同步到角色卡主世界书「${wbName}」` };
+
+    const targetBook = wbName;
+    return await 串行写世界书(targetBook, async () => {
+      if (!仍属当前()) return { 状态: '待同步', 说明: '聊天、分支或世界修订已变化，本次旧投影未写入世界书' };
+      const content = buildInjectionPrompt(data, settings);
+      const existing = (await useHost().worldbook.entries(targetBook)).find(isYanhuoEntry);
+      if (!仍属当前()) return { 状态: '待同步', 说明: '聊天、分支或世界修订已变化，本次旧投影未写入世界书' };
+      if (existing) {
+        // 保留其它字段, 只刷新内容; 确保防递归开启; 名字若命中 ACU 屏蔽词则改回安全名
+        await useHost().worldbook.update(targetBook, wb =>
+          wb.map(entry =>
+            isYanhuoEntry(entry)
+              ? {
+                  ...entry,
+                  name: sanitizeEntryName(entry.name || WORLDBOOK_ENTRY_NAME),
+                  content,
+                  recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
+                }
+              : entry,
+          ),
+        );
+      } else {
+        // 条目被删除/改名后找不到, 重新创建
+        await useHost().worldbook.create(targetBook, [
+          {
+            name: WORLDBOOK_ENTRY_NAME,
+            content,
+            enabled: true,
+            probability: 100,
+            strategy: {
+              type: 'constant',
+              keys: [],
+              keys_secondary: { logic: 'not_any', keys: [] },
+              scan_depth: 'same_as_global',
+            },
+            position: { type: 'after_character_definition', role: 'system', depth: 0, order: 100 },
+            recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
+            extra: { yanhuo: true },
+          },
+        ]);
+      }
+      warnedNoWorldbook = false;
+      return { 状态: '已同步', 说明: `公开摘要已同步到${目标}「${targetBook}」` };
+    });
   } catch (error) {
     console.error('[烟火] 同步世界动向到世界书失败:', error);
     return { 状态: '待同步', 说明: `世界书同步未完成：${error instanceof Error ? error.message : String(error)}` };

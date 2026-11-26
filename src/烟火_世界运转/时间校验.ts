@@ -484,38 +484,70 @@ export function 建立世界时间约束(reply: string | readonly string[], oldW
 }
 
 /**
- * 校验模型返回的世界时间。
+ * 检查模型返回的世界时间（只记录诊断提醒，不再代码拦截抛错）。
  *
- * 两条边界的口径(v2.8 P1「时间证据」):
- *  - **旧/约束已经是可解析公历**时, 新输出突然变成非法公历或乱码("傍晚"、"2008年13月40日")
- *    要拒绝 —— 否则一个坏值就能把整条世界时钟弄成永久"不可判定";
- *  - **真正的未知历法**(古代/仙侠卡的"元和三年·三月初七")仍然明确降级: 约束没有公历边界,
- *    这里一律不拦, 不改写、不强行解析时分。
+ * 约定：
+ *  - 时间对齐由提示词严格约束，代码不再因时间超界或格式异常拒收/打回 AI 输出；
+ *  - 若存在公历边界而模型返回了无法解析的日期，或在需要校验跨日时日期落在参考区间之外，
+ *    返回一条可供日志记录的提醒文本；无异常或非公历卡返回 null。
  */
-export function 校验世界时间(worldTime: string, constraint: 世界时间约束): void {
+export function 校验世界时间(worldTime: string, constraint: 世界时间约束): string | null {
   const 世界日期 = 解析日期(worldTime);
   const 有公历边界 = !!(constraint.最早日期 && constraint.最晚日期);
   if (!世界日期) {
     if (有公历边界) {
       const 原值 = String(worldTime ?? '').trim();
-      throw Error(`「世界.时间」无法解析为公历日期（${原值 || '空'}）：上轮世界时间或正文已有可解析的公历日期，不能突然换成非法公历或乱码，请重新输出；${constraint.提示}`);
+      return `「世界.时间」未解析为公历日期（${原值 || '空'}），代码未拦截；${constraint.提示}`;
     }
-    return;
+    return null;
   }
-  if (!有公历边界) return;
-  /**
-   * 2026-11-24 P6-B：**不拦跨日**这一档只跳过**范围**检查，**不跳过**上面的可解析检查。
-   *
-   * 两条边界仍然成立：
-   *   · 旧值可解析、新值乱码 → 上面那段已经抛了（`有公历边界` 为 true）
-   *   · 新值可解析但不在范围内 → 这一档放行（用户要求：时间约束交给提示词）
-   */
-  if (constraint.不拦跨日) return;
+  if (!有公历边界) return null;
+  if (constraint.不拦跨日) return null;
   if (世界日期.天 < constraint.最早日期!.天 || 世界日期.天 > constraint.最晚日期!.天) {
     const lower = `${constraint.最早日期!.年}-${String(constraint.最早日期!.月).padStart(2, '0')}-${String(constraint.最早日期!.日).padStart(2, '0')}`;
     const upper = `${constraint.最晚日期!.年}-${String(constraint.最晚日期!.月).padStart(2, '0')}-${String(constraint.最晚日期!.日).padStart(2, '0')}`;
-    throw Error(`「世界.时间」日期 ${世界日期.年}-${String(世界日期.月).padStart(2, '0')}-${String(世界日期.日).padStart(2, '0')} 超出正文时间约束 ${lower}${lower === upper ? '' : ` 至 ${upper}`}；${constraint.提示}`);
+    return `「世界.时间」日期 ${世界日期.年}-${String(世界日期.月).padStart(2, '0')}-${String(世界日期.日).padStart(2, '0')} 超出正文参考范围 ${lower}${lower === upper ? '' : ` 至 ${upper}`}，代码未拦截；${constraint.提示}`;
   }
+  return null;
+}
+
+const 纯时段词 = /^(凌晨|清晨|早晨|早上|上午|正午|中午|午后|下午|傍晚|黄昏|薄暮|入夜|晚上|夜晚|夜里|夜间|深夜|午夜|半夜)$/;
+
+/**
+ * 对模型返回的世界时间做非阻塞软保底（绝不抛错拦截）：
+ *  - 若模型返回了可解析的公历日期（无论是否跨日、是否与正文有偏差），原样保留，只附带诊断备注；
+ *  - 若上轮时间是标准公历，而模型意外输出了无日期的纯时段词（如“傍晚”）或非法日期/乱码（如“2008年13月40日”），
+ *    为避免整条下游时钟（传播时滞/近期日程/到期掷骰/跨日统计）集体失效，自动保住上轮公历日期并记入备注；
+ *  - 古代/未知历法或首次建档（上轮不可解析）原样放行。
+ */
+export function 保底世界时间(
+  worldTime: string,
+  oldWorldTime: string,
+  constraint?: 世界时间约束,
+): { 时间: string; 备注: string | null } {
+  const 原值 = String(worldTime ?? '').trim();
+  const 旧文本 = String(oldWorldTime ?? '').trim();
+  const 诊断 = constraint ? 校验世界时间(原值, constraint) : null;
+  if (解析日期(原值)) {
+    return { 时间: 原值, 备注: 诊断 };
+  }
+  const 旧日期 = 解析日期(旧文本);
+  if (!旧日期) {
+    return { 时间: 原值, 备注: 诊断 };
+  }
+  if (纯时段词.test(原值)) {
+    const 补全 = /年/.test(旧文本)
+      ? `${旧日期.年}年${旧日期.月}月${旧日期.日}日 ${原值}`
+      : `${旧日期.年}-${String(旧日期.月).padStart(2, '0')}-${String(旧日期.日).padStart(2, '0')} ${原值}`;
+    return {
+      时间: 补全,
+      备注: `「世界.时间」仅给出时段（${原值}），已自动补全上轮公历日期为「${补全}」，防止传播时滞与日程失效`,
+    };
+  }
+  return {
+    时间: 旧文本,
+    备注: `「世界.时间」无法解析为公历日期（${原值 || '空'}），已自动沿用上轮公历时间「${旧文本}」，防止传播时滞与日程失效`,
+  };
 }
 
 /**

@@ -33,7 +33,7 @@ import { 传讯速度表, type 传讯速度 } from './schema';
 import { 设传讯速度 } from './保存世界状态';
 import { 取节奏 } from './节奏';
 import { 解析日期 } from './时间校验';
-import { 取近期日程, 取数据变化, 相对日 } from './公开摘要';
+import { 取近期日程, 取数据变化, 构建公开摘要, 相对日 } from './公开摘要';
 import { getSettings, useSettingsStore } from './settings';
 import { UI_KEY, useConsoleStore, useDebugStore, useStateStore, useUpdatingStore } from './state';
 import { useHost } from './host';
@@ -108,6 +108,10 @@ const {
   onPanelPointerDown,
   closePanel,
 } = 面板;
+// 供模板 ref="rootEl/panelRef/headerEl" 绑定，实际读写在 使用面板机制 内部完成
+void rootEl;
+void panelRef;
+void headerEl;
 
 // 推进中弹条是烟火独有的下游(建立在 贴球锚点 之上), 不属于共用的窗口机制
 使用推进弹条(
@@ -270,9 +274,9 @@ function fmtTimestamp(timestamp?: number): string {
 // 手动编辑 — 所有编辑都经 世界数据变更.ts: 它落快照 + 同步世界书注入 + 返回新数据
 // ---------------------------------------------------------------------------
 
-/** 切换「启用世界运转」/「注入世界动向到主AI」/「传播时滞」时立即生效: 关=删条目, 开=建/刷新条目 */
+/** 切换「启用世界运转」/「注入世界动向到主AI」/「写入世界书」/「传播时滞」时立即生效 */
 watch(
-  () => [settings.value.启用运转, settings.value.运转.注入世界书条目, settings.value.运转.传播时滞],
+  () => [settings.value.启用运转, settings.value.运转.注入世界书条目, settings.value.运转.世界书写入目标, settings.value.运转.传播时滞],
   ([启用运转, 注入]) => {
     syncWorldbookEntry(stateStore.data, !!(启用运转 && 注入), settings.value).catch(error => {
       console.error('[烟火] 切换注入开关后同步世界书条目失败:', error);
@@ -540,6 +544,7 @@ async function copyText(text: string, tip = '已复制到剪贴板') {
   }
 }
 const injectionPreview = ref<string | null>(null);
+const 在途事件们 = computed(() => 构建公开摘要(world.value, settings.value).在途);
 function showInjection() {
   injectionPreview.value = buildInjectionPrompt(world.value, getSettings());
 }
@@ -744,6 +749,15 @@ function toggleTrail(key: string) {
               </div>
               <pre v-if="injectionPreview" class="yh-pre yh-pre-short">{{ injectionPreview }}</pre>
               <p v-else class="yh-mini-empty">点「生成预览」查看当前世界动向会注入给主AI的文本</p>
+              <template v-if="在途事件们.length > 0">
+                <h3 class="yh-col-title">传播时滞 · 暂未到达本地（{{ 在途事件们.length }} 件）</h3>
+                <ul class="yh-rows yh-transit-list">
+                  <li v-for="项 in 在途事件们" :key="`${项.标题}-${项.地点}`">
+                    <span class="yh-rows-k">{{ 项.原因 === '在途' && 项.预计剩余天数 != null ? `约 ${项.预计剩余天数} 天后到` : '传不到本地' }}</span>
+                    <span class="yh-rows-v"><strong>{{ 项.标题 }}</strong>{{ 项.地点 }} · {{ 项.传播 }}</span>
+                  </li>
+                </ul>
+              </template>
               <h3 class="yh-col-title">控制台输出</h3>
               <div class="yh-console">
                 <p
@@ -868,38 +882,34 @@ function toggleTrail(key: string) {
                 </button>
               </div>
               <div class="yh-set-col">
-                <h3 class="yh-col-title">请求技巧</h3>
+                <h3 class="yh-col-title">请求与重试</h3>
                 <div class="yh-toggles">
                   <label class="yh-toggle">
                     <input v-model="settings.运转.预填充" type="checkbox" />
                     <span class="yh-toggle-track"></span>
                     <span class="yh-toggle-text">预填充<em>引导模型直接输出 JSON，减少格式失败</em></span>
                   </label>
-                  <label class="yh-toggle">
-                    <input v-model="settings.运转.破限" type="checkbox" />
-                    <span class="yh-toggle-track"></span>
-                    <span class="yh-toggle-text">破限<em>接口有内容政策拦截时使用</em></span>
-                  </label>
-                  <label class="yh-toggle">
-                    <input v-model="settings.运转.头部填充" type="checkbox" />
-                    <span class="yh-toggle-track"></span>
-                    <span class="yh-toggle-text"
-                      >头部填充<em>填充文本作为第一条消息单独发送，留空用内置小说原文</em></span
-                    >
-                  </label>
-                  <label class="yh-toggle">
-                    <input v-model="settings.运转.防截断" type="checkbox" />
-                    <span class="yh-toggle-track"></span>
-                    <span class="yh-toggle-text">防截断<em>缝在 system 末尾</em></span>
-                  </label>
                 </div>
-                <label class="yh-field" style="margin-top: 2px">
-                  <span class="yh-field-label">头部填充文本（留空使用内置小说原文，建议1W字左右）</span>
+                <label class="yh-field">
+                  <span class="yh-field-label">失败重试次数</span>
+                  <input
+                    v-model.number="settings.运转.重试次数"
+                    type="number"
+                    min="0"
+                    max="10"
+                    class="yh-input"
+                  />
+                  <span class="yh-field-hint"
+                    >接口报错或输出格式不合格时自动重试的次数（0 = 不重试，默认 2 次）</span
+                  >
+                </label>
+                <label class="yh-field">
+                  <span class="yh-field-label">自定义提示词 / 补充规则（可选）</span>
                   <textarea
-                    v-model="settings.运转.头部填充文本"
+                    v-model="settings.运转.自定义提示词"
                     class="yh-input yh-textarea"
-                    rows="6"
-                    placeholder="开启「头部填充」后，这段文本会作为第一条消息原样发送；留空则使用内置的小说原文"
+                    rows="3"
+                    placeholder="留空则使用默认规则；可补充本世界观的特殊法则、禁忌或推进偏好"
                   ></textarea>
                 </label>
               </div>
@@ -919,6 +929,11 @@ function toggleTrail(key: string) {
                     <span class="yh-toggle-text">自动推进<em>每次（或每 N 次）AI 回复后推进一次世界</em></span>
                   </label>
                   <label class="yh-toggle">
+                    <input v-model="settings.运转.世界形势" type="checkbox" />
+                    <span class="yh-toggle-track"></span>
+                    <span class="yh-toggle-text">世界形势<em>大趋势（战云/商路/教派/新政等）；关掉后保留旧档案但不再维护</em></span>
+                  </label>
+                  <label class="yh-toggle">
                     <input v-model="settings.运转.世界日程" type="checkbox" />
                     <span class="yh-toggle-track"></span>
                     <span class="yh-toggle-text">日程<em>按世界观生成节日、开市、检阅等周期节点</em></span>
@@ -935,6 +950,15 @@ function toggleTrail(key: string) {
                     <span class="yh-toggle-track"></span>
                     <span class="yh-toggle-text"
                       >到期掷骰<em>事件到了下次判定时间，由脚本掷出推进/僵持/受挫，世界引擎按结果写这一步</em></span
+                    >
+                  </label>
+                  <label class="yh-toggle">
+                    <input v-model="settings.运转.联动彼方" type="checkbox" />
+                    <span class="yh-toggle-track"></span>
+                    <span class="yh-toggle-text"
+                      >联动彼方幕后人物<em
+                        >只读彼方人物的身份、目标与暗中打算（不含恋爱/生理/起居），供烟火联动推演暗线、组织动向或保密事件；无数据时自动跳过</em
+                      ></span
                     >
                   </label>
                 </div>
@@ -967,7 +991,7 @@ function toggleTrail(key: string) {
                       <option value="正常">正常——每轮主动找，找不到才静止</option>
                       <option value="密集">密集——每轮尽量都有产出</option>
                     </select>
-                    <span class="yh-field-label" style="font-weight: 400; color: var(--yh-ink-faint)"
+                    <span class="yh-field-hint"
                       >稀疏=允许长时间没有新事件；正常=每轮主动找，找不到才静止；密集=每轮尽量都有产出。只调配额，不改事件合格线。</span
                     >
                   </label>
@@ -980,7 +1004,7 @@ function toggleTrail(key: string) {
                       max="100"
                       class="yh-input"
                     />
-                    <span class="yh-field-label" style="font-weight: 400; color: var(--yh-ink-faint)"
+                    <span class="yh-field-hint"
                       >删楼回退的保险窗口：保留最近 N
                       份楼层快照（1~100）。每份几KB~30KB，保留过多时聊天文件随之变大</span
                     >
@@ -994,7 +1018,7 @@ function toggleTrail(key: string) {
                     <input v-model="settings.运转.注入世界书条目" type="checkbox" />
                     <span class="yh-toggle-track"></span>
                     <span class="yh-toggle-text"
-                      >注入世界动向到主AI<em>写入角色卡主世界书常驻条目「【烟火】世界动向」，切聊天自动重写</em></span
+                      >注入世界动向到主AI<em>写入世界书常驻条目「【烟火】世界动向」，切聊天自动重写</em></span
                     >
                   </label>
                   <label class="yh-toggle">
@@ -1010,18 +1034,16 @@ function toggleTrail(key: string) {
                     <input v-model="settings.运转.传播时滞" type="checkbox" />
                     <span class="yh-toggle-track"></span>
                     <span class="yh-toggle-text"
-                      >传播时滞<em>远方的消息按传讯速度晚几日才传到主角所在地；本聊天还要选下面的传讯速度才生效</em></span
+                      >传播时滞<em>远方的消息按传讯速度晚几日才传到主角所在地；在首页「传讯速度」按聊天单独选择后生效</em></span
                     >
                   </label>
                 </div>
                 <label class="yh-field">
-                  <span class="yh-field-label">传讯速度（本聊天）</span>
-                  <select :value="当前传讯速度" class="yh-input yh-select" @change="改传讯速度">
-                    <option v-for="速度 in 传讯速度表" :key="速度" :value="速度">{{ 传讯速度说明[速度] }}</option>
+                  <span class="yh-field-label">写入世界书</span>
+                  <select v-model="settings.运转.世界书写入目标" class="yh-input yh-select">
+                    <option value="角色卡主世界书">角色卡主世界书（单聊默认）</option>
+                    <option value="聊天世界书">聊天世界书（群聊必选，每场聊天独立一本）</option>
                   </select>
-                  <span class="yh-field-label" style="font-weight: 400; color: var(--yh-ink-faint)"
-                    >选一个时代后，远方消息才会按时差传到。每个聊天单独保存，删楼、清空世界都不会改掉它。</span
-                  >
                 </label>
               </div>
               <div class="yh-set-col">
@@ -1132,6 +1154,19 @@ function toggleTrail(key: string) {
                 ></textarea>
               </label>
             </div>
+            <div class="yh-chat-speed">
+              <span class="yh-chat-speed-label">传讯速度</span>
+              <select
+                :value="当前传讯速度"
+                class="yh-input yh-select yh-chat-speed-select"
+                aria-label="传讯速度（本聊天）"
+                title="每个聊天单独保存；选定时代后，远方消息按时差传到主角所在地"
+                @change="改传讯速度"
+              >
+                <option v-for="速度 in 传讯速度表" :key="速度" :value="速度">{{ 传讯速度说明[速度] }}</option>
+              </select>
+            </div>
+            <p v-if="!settings.运转.传播时滞" class="yh-chat-speed-hint">设置中「传播时滞」已关闭，当前不会按距离延迟</p>
             <p class="yh-now-meta">
               已推进 {{ world.统计.推进次数 }} 次 · 上次 {{ fmtTimestamp(world.统计.最后推进)
               }}{{ world.小结 ? ` · ${world.小结}` : '' }}
@@ -1372,8 +1407,7 @@ function toggleTrail(key: string) {
                         <span
                           v-for="event in factionRelatedEvents"
                           :key="event.id || event.标题"
-                          class="yh-mini-title"
-                          style="display: inline-block; margin-right: 10px"
+                          class="yh-mini-title yh-related-event"
                           @click="跳到('chronicle')"
                           >{{ event.标题 }}（{{ event.阶段 }}）</span
                         >
@@ -1661,1432 +1695,4 @@ function toggleTrail(key: string) {
   </div>
 </template>
 
-<style lang="scss">
-// ---------------------------------------------------------------------------
-// v2.9.7「简报」: 石墨底 + 钴蓝(唯一的强调色) + 红(只给重大事件、错误、危险操作), 其余全是中性灰。
-// 颜色 / 字体 / 球径 / 层序全部来自 主题.ts(取根变量 → .yh-root 的内联样式), 这里一律只写 var(...)。
-//
-// ⚠ 不写按宽度的媒体查询: iframe 的视口就是"球 ∪ 面板"那块矩形(面板约 400px 宽),
-//   max-width 之类在桌面上也会命中。窄屏由面板机制把面板铺满视口, 这里只管单栏排版;
-//   触屏差异用 (hover: none)。
-// ---------------------------------------------------------------------------
-
-.yh-root {
-  position: fixed;
-  inset: 0;
-  font-family: var(--yh-sans);
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--yh-ink);
-  pointer-events: none;
-  z-index: var(--yh-z-root);
-  -webkit-font-smoothing: antialiased;
-
-  *,
-  *::before,
-  *::after {
-    box-sizing: border-box;
-  }
-
-  button,
-  input,
-  select,
-  textarea {
-    font: inherit;
-    color: inherit;
-  }
-
-  // ---- 悬浮球 ----
-  .yh-orb {
-    width: var(--yh-orb-size);
-    height: var(--yh-orb-size);
-    pointer-events: auto;
-    position: absolute;
-    display: grid;
-    place-items: center;
-    padding: 0;
-    border-radius: 50%;
-    border: 1px solid var(--yh-line-strong);
-    background: var(--yh-panel);
-    color: var(--yh-accent);
-    cursor: grab;
-    appearance: none;
-    outline: none;
-    -webkit-tap-highlight-color: transparent;
-    // 触屏拖动: 禁止浏览器把 pointermove 当滚动/长按手势吞掉, 拖球才跟手
-    touch-action: none;
-    z-index: var(--yh-z-orb);
-    transition: border-color 0.18s ease-out;
-
-    .yh-orb-mark {
-      // ⚠ 2026-11-23（需求方 #894）：**回正中心，恢复 20px，去掉 translate。**
-      //
-      //   ── 上一版为什么错 ──
-      //
-      //   上一版为了给角标腾地方，写了 `transform: translate(-2px, 2px)` ——
-      //   **那等于用「logo 不居中」换「不重叠」。** 用户原话：
-      //   > 悬浮球的修法，是把 logo 往左边移动？这也太丑了，**logo 都不居中！**
-      //
-      //   ── 正确的做法 ──
-      //
-      //   角标改成 **6px 圆点、不显示件数** ⇒ 它占的地方小到不需要 logo 让位。
-      //   件数本身没丢：面板顶部导航本来就有「动态 N」。
-      //   **球上只需要"有/没有"这个二值信号。**
-      //
-      //   ⚠ **居中是靠 `place-items: center`（在 `.yh-orb` 上），不是靠位移去凑。**
-      //     判据 `yanhuo-orb-logo-居中.test.ts` 会拦住任何 `translate` 位移。
-      width: 20px;
-      height: 20px;
-      // 保留：管的是火焰摆动动画的原点，**不是位置偏移**
-      transform-origin: 50% 80%;
-    }
-    // 推进中的转圈弧: 画在边线以内(面板关着时 iframe 只有一个球那么大, 圆外会被裁掉)
-    &::after {
-      content: '';
-      position: absolute;
-      inset: 1px;
-      border-radius: 50%;
-      border: 2px solid transparent;
-      pointer-events: none;
-    }
-    &:hover {
-      border-color: var(--yh-accent-line);
-    }
-    &.is-dragging {
-      cursor: grabbing;
-    }
-    &.is-open {
-      border-color: var(--yh-accent);
-    }
-    &.is-updating::after {
-      border-top-color: var(--yh-accent);
-      border-right-color: var(--yh-accent-line);
-    }
-  }
-  .yh-flame {
-    fill: currentColor;
-  }
-  // 进行中件数: 圆里面的右上角(同上, 圆外会被裁)
-  //
-  // ⚠ 2026-11-23（需求方 #894）：**改成 6px 圆点，不显示件数。**
-  //
-  //   ── 为什么不显示数字 ──
-  //
-  //   件数本身没丢 —— 面板顶部导航本来就有「动态 N」。
-  //   **球上只需要"有/没有"这个二值信号。** 这样它占的地方小到不需要 logo 让位。
-  //
-  //   ── 为什么 top/right 是 6px 而不是 5 ──
-  //
-  //   6px 圆点在 (34,6)，**外角**离圆心 = √(14² + 14²) = **19.8 ≤ 20** ⇒ 刚好在圆内。
-  //   5px 就出圆了（√(15² + 15²) = 21.2 > 20）—— 会被 iframe 裁掉一角。
-  //   **⚠ 这个 6 是算出来的，不是拍的。**
-  //
-  //   ── 硬约束：必须在圆内 ──
-  //
-  //   面板关着时 iframe 只有一个球那么大，圆外的会被裁掉（见 .yh-orb 注释）。
-  .yh-orb-count {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    width: 6px;
-    height: 6px;
-    padding: 0;
-    border-radius: 50%;
-    background: var(--yh-accent);
-    box-shadow: 0 0 0 2px var(--yh-panel);
-    pointer-events: none;
-  }
-
-  // ---- 面板 ----
-  .yh-panel {
-    z-index: var(--yh-z-panel);
-    pointer-events: auto;
-    position: absolute;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    background: var(--yh-panel);
-    border: 1px solid var(--yh-line-strong);
-    border-radius: 14px;
-    // 阴影由酒馆页面上的阴影层绘制(iframe 内绘制会被 clip-path 裁出硬边), 见 共用/面板机制 syncPanelShadow
-    box-shadow: none;
-    &.is-dragging {
-      user-select: none;
-    }
-  }
-  .yh-header {
-    flex: none;
-    cursor: grab;
-    user-select: none;
-    // 触屏拖动面板: 禁止浏览器手势接管 pointermove(同悬浮球)
-    touch-action: none;
-    &:active {
-      cursor: grabbing;
-    }
-  }
-  .yh-bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    padding: 10px 8px 0 16px;
-  }
-  .yh-brand-name {
-    flex: none;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    margin-right: 4px;
-  }
-  .yh-spacer {
-    flex: 1;
-  }
-  .yh-status {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    font-size: 12px;
-    color: var(--yh-ink-dim);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    .yh-status-dot {
-      flex: none;
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--yh-ink-faint);
-    }
-    &.is-on .yh-status-dot {
-      background: var(--yh-accent);
-    }
-    &.is-running {
-      color: var(--yh-accent);
-      .yh-status-dot {
-        background: var(--yh-accent);
-      }
-    }
-  }
-  .yh-icon-btn {
-    flex: none;
-    display: inline-grid;
-    place-items: center;
-    width: 30px;
-    height: 30px;
-    padding: 0;
-    line-height: 0;
-    border: 0;
-    border-radius: 8px;
-    background: transparent;
-    color: var(--yh-ink-dim);
-    cursor: pointer;
-    transition:
-      background 0.15s,
-      color 0.15s;
-    svg {
-      display: block;
-    }
-    &:hover {
-      background: var(--yh-hover);
-      color: var(--yh-ink);
-    }
-    &.is-on {
-      background: var(--yh-accent-soft);
-      color: var(--yh-accent);
-    }
-  }
-
-  // 抬头: 时间是整块面板最大的字
-  .yh-hero {
-    padding: 8px 16px 0;
-  }
-  .yh-time-value {
-    display: block;
-    font-size: 40px;
-    font-weight: 700;
-    line-height: 1.08;
-    letter-spacing: -0.01em;
-    font-variant-numeric: tabular-nums;
-    overflow-wrap: anywhere;
-    &.is-long {
-      font-size: 26px;
-      line-height: 1.25;
-      letter-spacing: 0.02em;
-    }
-  }
-  .yh-time-sub {
-    display: block;
-    margin-top: 4px;
-    color: var(--yh-ink-dim);
-    font-variant-numeric: tabular-nums;
-  }
-  .yh-where {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin: 8px 0 0;
-    font-weight: 600;
-    svg {
-      flex: none;
-      color: var(--yh-accent);
-    }
-  }
-  // 推进进度: 时间下面一根细线, 推进中才有颜色
-  .yh-progress {
-    position: relative;
-    height: 2px;
-    margin-top: 12px;
-    overflow: hidden;
-    i {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      left: -40%;
-      width: 40%;
-      background: var(--yh-accent);
-      opacity: 0;
-    }
-  }
-  .yh-panel.is-updating .yh-progress {
-    background: var(--yh-line);
-    i {
-      opacity: 1;
-    }
-  }
-
-  // 顶上那排: 简报里跳段 / 子页里返回
-  .yh-jump {
-    flex: none;
-    display: flex;
-    gap: 2px;
-    padding: 6px 10px;
-    border-bottom: 1px solid var(--yh-line);
-    overflow-x: auto;
-    scrollbar-width: none;
-    &::-webkit-scrollbar {
-      display: none;
-    }
-  }
-  .yh-jump-item,
-  .yh-jump-back {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    padding: 4px 10px;
-    border: 0;
-    border-radius: 999px;
-    background: transparent;
-    color: var(--yh-ink-dim);
-    cursor: pointer;
-    transition:
-      background 0.15s,
-      color 0.15s;
-    &:hover {
-      background: var(--yh-hover);
-      color: var(--yh-ink);
-    }
-  }
-  .yh-jump-back {
-    padding-left: 6px;
-    color: var(--yh-ink);
-    font-weight: 600;
-  }
-  .yh-jump-n {
-    font-size: 11px;
-    color: var(--yh-ink-faint);
-    font-variant-numeric: tabular-nums;
-  }
-
-  // ---- 滚动区与分段 ----
-  .yh-body {
-    // position: relative 让各段的 offsetTop 以滚动区为基准(跳段用)
-    position: relative;
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-  .yh-page {
-    display: flex;
-    flex-direction: column;
-    padding: 4px 16px 24px;
-  }
-  .yh-sec {
-    padding: 16px 0 4px;
-    & + .yh-sec {
-      margin-top: 12px;
-      border-top: 1px solid var(--yh-line);
-    }
-  }
-  .yh-sec-title {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    margin: 0 0 8px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--yh-ink-faint);
-    span {
-      font-weight: 400;
-      font-variant-numeric: tabular-nums;
-    }
-  }
-
-  // ---- 此刻 ----
-  .yh-now-mood {
-    margin: 0;
-    font-size: 16px;
-    line-height: 1.6;
-    font-weight: 500;
-  }
-  .yh-now-trend {
-    margin: 6px 0 0;
-    color: var(--yh-ink-dim);
-  }
-  .yh-now-pace {
-    margin: 10px 0 0;
-    font-size: 12px;
-    color: var(--yh-ink-faint);
-    font-variant-numeric: tabular-nums;
-  }
-  .yh-now-empty {
-    margin: 0;
-    color: var(--yh-ink-dim);
-  }
-  .yh-now-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 14px;
-    .yh-btn-primary {
-      flex: 1 1 110px;
-    }
-    .yh-btn-danger {
-      margin-left: auto;
-    }
-  }
-  .yh-now-meta {
-    margin: 14px 0 0;
-    font-size: 11.5px;
-    color: var(--yh-ink-faint);
-  }
-  .yh-edit-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 9px 10px;
-    margin-top: 12px;
-    padding: 12px;
-    background: var(--yh-raise);
-    border: 1px solid var(--yh-line);
-    border-radius: 10px;
-    .yh-field-wide {
-      grid-column: 1 / -1;
-    }
-  }
-  .yh-kv {
-    display: grid;
-    grid-template-columns: 72px minmax(0, 1fr);
-    gap: 6px 12px;
-    margin: 0;
-    dt {
-      color: var(--yh-ink-faint);
-    }
-    dd {
-      margin: 0;
-      min-width: 0;
-    }
-  }
-  .yh-rows {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    li {
-      display: flex;
-      gap: 12px;
-      padding: 7px 0;
-      border-top: 1px solid var(--yh-line);
-      &:first-child {
-        border-top: 0;
-      }
-    }
-  }
-  .yh-rows-k {
-    flex: none;
-    width: 64px;
-    padding-top: 1px;
-    font-size: 12px;
-    color: var(--yh-ink-faint);
-    font-variant-numeric: tabular-nums;
-  }
-  .yh-rows-v {
-    min-width: 0;
-    color: var(--yh-ink-dim);
-    strong {
-      margin-right: 6px;
-      font-weight: 600;
-      color: var(--yh-ink);
-    }
-    .yh-arrow {
-      color: var(--yh-accent);
-    }
-  }
-
-  // ---- 按钮 ----
-  .yh-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    height: 32px;
-    padding: 0 12px;
-    border-radius: 9px;
-    border: 1px solid var(--yh-line);
-    background: var(--yh-raise);
-    color: var(--yh-ink);
-    cursor: pointer;
-    font-size: 12.5px;
-    white-space: nowrap;
-    transition:
-      background 0.15s,
-      border-color 0.15s,
-      color 0.15s;
-    &:hover:not(:disabled) {
-      background: var(--yh-hover);
-    }
-    &:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-    &.yh-btn-primary {
-      background: var(--yh-accent);
-      border-color: var(--yh-accent);
-      color: var(--yh-on-accent);
-      font-weight: 600;
-      &:hover:not(:disabled) {
-        background: color-mix(in srgb, var(--yh-accent) 88%, var(--yh-ink));
-      }
-    }
-    &.yh-btn-danger {
-      background: transparent;
-      border-color: transparent;
-      color: var(--yh-seal);
-      &:hover:not(:disabled),
-      &.is-confirm {
-        background: var(--yh-seal-soft);
-      }
-      &.is-confirm {
-        border-color: var(--yh-seal);
-      }
-    }
-    &.yh-btn-sm {
-      height: 26px;
-      padding: 0 9px;
-      font-size: 12px;
-      border-radius: 7px;
-    }
-    &.yh-interrupt {
-      flex: none;
-      height: 22px;
-      padding: 0 8px;
-      border-color: var(--yh-line-strong);
-      background: transparent;
-      &:hover:not(:disabled) {
-        background: transparent;
-        border-color: var(--yh-seal);
-        color: var(--yh-seal);
-      }
-    }
-  }
-
-  // ---- 筛选与小标签 ----
-  .yh-filter-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 10px;
-    margin-bottom: 4px;
-  }
-  .yh-chip-group {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .yh-chip {
-    padding: 1px 10px;
-    border: 1px solid var(--yh-line);
-    border-radius: 999px;
-    background: transparent;
-    color: var(--yh-ink-dim);
-    font-size: 12px;
-    cursor: pointer;
-    transition:
-      background 0.15s,
-      border-color 0.15s,
-      color 0.15s;
-    &:hover {
-      color: var(--yh-ink);
-      border-color: var(--yh-line-strong);
-    }
-    &.is-active {
-      background: var(--yh-ink);
-      border-color: var(--yh-ink);
-      color: var(--yh-panel);
-    }
-  }
-  .yh-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 8px;
-  }
-  .yh-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    max-width: 100%;
-    padding: 0 6px;
-    border: 1px solid transparent;
-    border-radius: 5px;
-    background: var(--yh-raise);
-    color: var(--yh-ink-dim);
-    font-size: 11px;
-    line-height: 18px;
-    &.yh-badge-重大 {
-      background: var(--yh-seal-soft);
-      color: var(--yh-seal);
-    }
-    &.yh-badge-urgent,
-    &.yh-badge-add {
-      background: var(--yh-accent-soft);
-      color: var(--yh-accent);
-    }
-    &.yh-badge-secret {
-      background: transparent;
-      border: 1px dashed var(--yh-ink-faint);
-    }
-    &.yh-badge-done {
-      color: var(--yh-ink-faint);
-    }
-    &.yh-badge-upd {
-      color: var(--yh-ink);
-    }
-    &.yh-badge-plain {
-      background: transparent;
-      border-color: var(--yh-line);
-    }
-  }
-
-  // ---- 动态 ----
-  .yh-feed {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-  .yh-feed-item {
-    position: relative;
-    padding: 12px 0;
-    border-top: 1px solid var(--yh-line);
-    &:first-child {
-      border-top: 0;
-    }
-    // 重大: 标题前一块红色小方印; 已结束: 整条变淡
-    &.scale-重大 .yh-feed-title::before {
-      content: '';
-      display: inline-block;
-      width: 8px;
-      height: 8px;
-      margin-right: 8px;
-      border-radius: 2px;
-      background: var(--yh-seal);
-      vertical-align: 2px;
-    }
-    &.is-已结束 {
-      opacity: 0.55;
-    }
-    &:hover,
-    &:focus-within {
-      .yh-feed-edit,
-      .yh-feed-remove {
-        opacity: 1;
-      }
-    }
-  }
-  .yh-feed-main {
-    min-width: 0;
-  }
-  .yh-feed-meta-top {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px 8px;
-    padding-right: 56px;
-    font-size: 12px;
-    color: var(--yh-ink-faint);
-    font-variant-numeric: tabular-nums;
-    span + span::before {
-      content: '·';
-      margin-right: 8px;
-    }
-  }
-  .yh-feed-head {
-    margin-top: 3px;
-  }
-  .yh-feed-title {
-    display: block;
-    font-size: 14.5px;
-    font-weight: 650;
-    line-height: 1.4;
-  }
-  .yh-feed-edit,
-  .yh-feed-remove {
-    position: absolute;
-    top: 8px;
-    width: 24px;
-    height: 24px;
-    opacity: 0;
-    color: var(--yh-ink-faint);
-  }
-  .yh-feed-edit {
-    right: 26px;
-  }
-  .yh-feed-remove {
-    right: 0;
-    &:hover {
-      color: var(--yh-seal);
-    }
-  }
-  .yh-feed-desc {
-    margin: 2px 0 0;
-    color: var(--yh-ink-dim);
-  }
-  .yh-feed-cause {
-    margin: 4px 0 0;
-    font-size: 12px;
-    color: var(--yh-ink-faint);
-  }
-  .yh-collapse {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 2px 0;
-    border: 0;
-    background: transparent;
-    color: var(--yh-ink-dim);
-    font-size: 12px;
-    cursor: pointer;
-    &:hover {
-      color: var(--yh-ink);
-    }
-    svg {
-      transition: transform 0.15s;
-      &.is-flipped {
-        transform: rotate(-90deg);
-      }
-    }
-  }
-  .yh-trail-toggle {
-    margin-top: 6px;
-    font-size: 11.5px;
-    color: var(--yh-ink-faint);
-  }
-  .yh-feed-trail {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin: 4px 0 0;
-    padding: 2px 0 2px 12px;
-    border-left: 2px solid var(--yh-line-strong);
-    li {
-      display: flex;
-      align-items: baseline;
-      gap: 8px;
-    }
-  }
-  .yh-trail-time {
-    flex: none;
-    font-size: 11px;
-    color: var(--yh-ink-faint);
-    font-variant-numeric: tabular-nums;
-  }
-  .yh-trail-text {
-    font-size: 12px;
-    color: var(--yh-ink-dim);
-  }
-  .yh-inline-edit {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .yh-edit-row {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-    gap: 7px;
-  }
-  .yh-edit-actions {
-    display: flex;
-    gap: 6px;
-  }
-
-  // ---- 组织 ----
-  .yh-fac-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 12px;
-    .yh-chip {
-      padding: 3px 11px;
-      font-size: 12.5px;
-      &.is-active {
-        background: var(--yh-accent-soft);
-        border-color: var(--yh-accent-line);
-        color: var(--yh-ink);
-      }
-    }
-  }
-  .yh-detail-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 6px;
-    h3 {
-      margin: 0;
-      font-size: 17px;
-      font-weight: 700;
-    }
-  }
-  .yh-detail-actions {
-    display: flex;
-    gap: 2px;
-  }
-  .yh-detail-rows {
-    display: flex;
-    flex-direction: column;
-    margin: 0;
-  }
-  .yh-detail-row {
-    display: grid;
-    grid-template-columns: 72px minmax(0, 1fr);
-    gap: 12px;
-    padding: 7px 0;
-    border-top: 1px solid var(--yh-line);
-    &:first-child {
-      border-top: 0;
-    }
-    dt {
-      color: var(--yh-ink-faint);
-    }
-    dd {
-      margin: 0;
-      min-width: 0;
-    }
-  }
-  .yh-detail-hint {
-    margin: 10px 0 0;
-    font-size: 11.5px;
-    color: var(--yh-ink-faint);
-  }
-  .yh-mini-title {
-    color: var(--yh-ink);
-    cursor: pointer;
-    text-decoration: underline;
-    text-decoration-color: var(--yh-line-strong);
-    text-underline-offset: 3px;
-    &:hover {
-      color: var(--yh-accent);
-      text-decoration-color: currentColor;
-    }
-  }
-  .yh-mini-empty {
-    margin: 0;
-    font-size: 12px;
-    color: var(--yh-ink-faint);
-  }
-
-  // ---- 世界(五层档案) ----
-  .yh-world-hint {
-    margin: 0 0 8px;
-    font-size: 12px;
-    color: var(--yh-ink-faint);
-  }
-  .yh-world-sec {
-    border-top: 1px solid var(--yh-line);
-    &:first-child {
-      border-top: 0;
-    }
-    > summary {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      padding: 9px 0;
-      list-style: none;
-      cursor: pointer;
-      user-select: none;
-      font-weight: 600;
-      &::-webkit-details-marker {
-        display: none;
-      }
-      em {
-        font-style: normal;
-        font-weight: 400;
-        font-size: 11px;
-        color: var(--yh-ink-faint);
-        font-variant-numeric: tabular-nums;
-      }
-      .yh-world-caret {
-        color: var(--yh-ink-faint);
-        transition: transform 0.15s ease;
-      }
-      &:hover {
-        color: var(--yh-accent);
-      }
-    }
-    &:not([open]) > summary .yh-world-caret {
-      transform: rotate(-90deg);
-    }
-  }
-  .yh-world-add {
-    margin-left: auto;
-  }
-  .yh-world-list {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin: 0 0 10px;
-    padding: 0;
-  }
-  .yh-world-grid {
-    list-style: none;
-    margin: 0 0 10px;
-    padding: 0;
-    display: grid;
-    /* 必须是 auto-fit, 不能是 auto-fill: 子项是 metricEntries, 数量可变, 可以只有 1 个;
-       auto-fill 会把一行铺满空轨道, 那一张卡就挤在最左边。(判据: tests/bifang-网格自动填充.test.ts) */
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 8px;
-  }
-  .yh-world-card {
-    padding: 9px 12px 10px;
-    background: var(--yh-raise);
-    border: 1px solid var(--yh-line);
-    border-radius: 10px;
-  }
-  .yh-world-card-head {
-    display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: 6px;
-    strong {
-      font-weight: 600;
-    }
-  }
-  .yh-world-delta {
-    font-size: 11.5px;
-    line-height: 1.45;
-    color: var(--yh-ink-faint);
-  }
-  .yh-world-main {
-    margin: 4px 0 0;
-  }
-  .yh-world-fields {
-    display: grid;
-    grid-template-columns: max-content minmax(0, 1fr);
-    gap: 3px 10px;
-    align-items: baseline;
-    margin: 6px 0 0;
-    > div {
-      display: contents;
-    }
-    dt {
-      font-size: 11.5px;
-      color: var(--yh-ink-faint);
-    }
-    dd {
-      margin: 0;
-      font-size: 12px;
-      color: var(--yh-ink-dim);
-    }
-  }
-  .yh-maturity-临近 {
-    background: var(--yh-accent-soft);
-    color: var(--yh-accent);
-  }
-  .yh-maturity-已发生 {
-    background: var(--yh-seal-soft);
-    color: var(--yh-seal);
-  }
-  .yh-maturity-酝酿,
-  .yh-maturity-已失效 {
-    color: var(--yh-ink-faint);
-  }
-  .yh-metric-card {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .yh-metric-top {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    .yh-world-card-actions {
-      margin-left: 4px;
-    }
-  }
-  .yh-metric-name {
-    font-size: 12px;
-    color: var(--yh-ink-dim);
-  }
-  .yh-metric-value {
-    margin-left: auto;
-    font-size: 15px;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-  }
-  .yh-metric-trend,
-  .yh-metric-note {
-    margin: 0;
-    font-size: 11.5px;
-    color: var(--yh-ink-faint);
-  }
-  .yh-world-card-actions {
-    display: flex;
-    gap: 2px;
-    margin-left: auto;
-    opacity: 0;
-    transition: opacity 0.12s ease;
-  }
-  .yh-world-card:hover .yh-world-card-actions,
-  .yh-world-card:focus-within .yh-world-card-actions {
-    opacity: 1;
-  }
-  .yh-world-act {
-    display: inline-grid;
-    place-items: center;
-    width: 22px;
-    height: 22px;
-    padding: 0;
-    border: 0;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--yh-ink-faint);
-    cursor: pointer;
-    transition:
-      background 0.12s,
-      color 0.12s;
-    &:hover {
-      background: var(--yh-hover);
-      color: var(--yh-ink);
-    }
-  }
-  .yh-world-edit {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-bottom: 10px;
-    padding: 10px 12px 12px;
-    background: var(--yh-raise);
-    border: 1px solid var(--yh-accent-line);
-    border-radius: 10px;
-  }
-  .yh-world-edit-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  // ---- 日志(子页, 单栏) ----
-  .yh-page-logs,
-  .yh-page-settings {
-    gap: 14px;
-    padding-top: 14px;
-  }
-  .yh-log-left,
-  .yh-log-right {
-    display: flex;
-    flex-direction: column;
-    gap: 9px;
-    min-width: 0;
-  }
-  .yh-log-right {
-    padding-top: 14px;
-    border-top: 1px solid var(--yh-line);
-  }
-  .yh-log-record {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-  }
-  .yh-log-meta {
-    margin: 0;
-    font-size: 11.5px;
-    color: var(--yh-ink-faint);
-  }
-  .yh-log-summary {
-    margin: 0;
-  }
-  .yh-log-diff {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 5px;
-    .yh-badge {
-      white-space: normal;
-      word-break: break-word;
-      text-align: left;
-    }
-  }
-  .yh-log-section {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-  .yh-log-attempt {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding-top: 6px;
-    & + .yh-log-attempt {
-      margin-top: 2px;
-      border-top: 1px dashed var(--yh-line);
-    }
-  }
-  .yh-log-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 7px;
-  }
-  .yh-log-right-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .yh-log-right-actions {
-    display: flex;
-    gap: 5px;
-  }
-  .yh-col-title {
-    margin: 0;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--yh-ink-faint);
-  }
-  .yh-pre {
-    margin: 0;
-    padding: 9px 11px;
-    max-height: 220px;
-    overflow-y: auto;
-    background: var(--yh-bg);
-    border: 1px solid var(--yh-line);
-    border-radius: 9px;
-    font: 11px/1.55 var(--yh-mono);
-    white-space: pre-wrap;
-    word-break: break-all;
-    color: var(--yh-ink-dim);
-    &.yh-pre-short {
-      max-height: 160px;
-    }
-    &.yh-pre-error {
-      color: var(--yh-seal);
-      border-color: var(--yh-seal-soft);
-    }
-  }
-  .yh-console {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    max-height: 220px;
-    overflow-y: auto;
-    padding: 7px 11px;
-    background: var(--yh-bg);
-    border: 1px solid var(--yh-line);
-    border-radius: 9px;
-  }
-  .yh-console-line {
-    margin: 0;
-    font: 11px/1.5 var(--yh-mono);
-    color: var(--yh-ink-dim);
-    word-break: break-all;
-    &.is-warn {
-      color: var(--yh-ink);
-    }
-    &.is-error {
-      color: var(--yh-seal);
-    }
-  }
-  .yh-console-time {
-    margin-right: 7px;
-    color: var(--yh-ink-faint);
-  }
-
-  // ---- 设置(子页, 单栏; 每组之间一条细线, 不再套卡片) ----
-  .yh-set-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    & + .yh-set-stack {
-      padding-top: 14px;
-      border-top: 1px solid var(--yh-line);
-    }
-  }
-  .yh-set-col {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    & + .yh-set-col {
-      padding-top: 14px;
-      border-top: 1px solid var(--yh-line);
-    }
-  }
-  .yh-field {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-  }
-  .yh-field-label {
-    font-size: 12px;
-    color: var(--yh-ink-dim);
-  }
-  .yh-field-pair {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 10px;
-  }
-  .yh-input {
-    width: 100%;
-    min-width: 0;
-    padding: 6px 10px;
-    border-radius: 8px;
-    border: 1px solid var(--yh-line-strong);
-    background: var(--yh-bg);
-    color: var(--yh-ink);
-    outline: none;
-    transition:
-      border-color 0.15s,
-      box-shadow 0.15s;
-    &::placeholder {
-      color: var(--yh-ink-faint);
-    }
-    &:focus {
-      border-color: var(--yh-accent);
-      box-shadow: 0 0 0 3px var(--yh-accent-soft);
-    }
-  }
-  textarea.yh-input {
-    min-height: 52px;
-    resize: vertical;
-    line-height: 1.55;
-  }
-  .yh-select {
-    appearance: none;
-    padding-right: 26px;
-    background-image:
-      linear-gradient(45deg, transparent 50%, var(--yh-ink-dim) 50%),
-      linear-gradient(135deg, var(--yh-ink-dim) 50%, transparent 50%);
-    background-position:
-      calc(100% - 15px) 55%,
-      calc(100% - 10px) 55%;
-    background-size: 5px 5px;
-    background-repeat: no-repeat;
-  }
-  .yh-key-row,
-  .yh-preset-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    .yh-input {
-      flex: 1;
-    }
-  }
-  // 开关: 文字在左、开关在右; 勾选框只是视觉上藏起来(键盘仍能聚焦切换)
-  .yh-toggles {
-    display: flex;
-    flex-direction: column;
-  }
-  .yh-toggle {
-    position: relative;
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 9px 0;
-    border-top: 1px solid var(--yh-line);
-    cursor: pointer;
-    &:first-child {
-      padding-top: 2px;
-      border-top: 0;
-    }
-    input {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      opacity: 0;
-      pointer-events: none;
-      &:checked + .yh-toggle-track {
-        background: var(--yh-accent);
-        &::after {
-          transform: translateX(14px);
-        }
-      }
-      &:focus-visible + .yh-toggle-track {
-        outline: 2px solid var(--yh-accent-line);
-        outline-offset: 2px;
-      }
-    }
-  }
-  .yh-toggle-track {
-    order: 2;
-    flex: none;
-    position: relative;
-    width: 34px;
-    height: 20px;
-    margin-top: 1px;
-    border-radius: 999px;
-    background: var(--yh-line-strong);
-    transition: background 0.15s;
-    &::after {
-      content: '';
-      position: absolute;
-      left: 2px;
-      top: 2px;
-      width: 16px;
-      height: 16px;
-      border-radius: 50%;
-      background: var(--yh-knob);
-      transition: transform 0.15s ease-out;
-    }
-  }
-  .yh-toggle-text {
-    order: 1;
-    min-width: 0;
-    em {
-      display: block;
-      font-style: normal;
-      font-size: 12px;
-      color: var(--yh-ink-faint);
-    }
-  }
-  .yh-about {
-    margin: 0;
-    padding-top: 12px;
-    border-top: 1px solid var(--yh-line);
-    font-size: 11.5px;
-    color: var(--yh-ink-faint);
-  }
-
-  // ---- 空状态 / 选区 / 滚动条 / 焦点 ----
-  .yh-empty {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    padding: 28px 0;
-    color: var(--yh-ink-faint);
-    p {
-      margin: 0;
-      text-align: center;
-    }
-    &.yh-empty-slim {
-      padding: 14px 0;
-    }
-  }
-  ::selection {
-    background: var(--yh-accent-soft);
-  }
-  ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-  ::-webkit-scrollbar-thumb {
-    background: var(--yh-line-strong);
-    border-radius: 999px;
-    border: 2px solid transparent;
-    background-clip: padding-box;
-    &:hover {
-      background: var(--yh-ink-faint);
-      background-clip: padding-box;
-    }
-  }
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  button:focus-visible,
-  input:focus-visible,
-  select:focus-visible,
-  textarea:focus-visible {
-    outline: 2px solid var(--yh-accent-line);
-    outline-offset: 1px;
-  }
-
-  // ---- 触屏: 没有 hover, 靠 hover 显形的操作按钮常显, 触摸目标放大 ----
-  @media (hover: none) {
-    .yh-feed-edit,
-    .yh-feed-remove,
-    .yh-world-card-actions {
-      opacity: 0.85;
-    }
-    .yh-icon-btn {
-      width: 38px;
-      height: 38px;
-    }
-    .yh-world-act {
-      width: 30px;
-      height: 30px;
-    }
-    .yh-btn {
-      height: 38px;
-    }
-  }
-
-  // ---- 动效: 只有面板入场、推进中的转圈 / 火苗 / 进度线; 系统要求减少动效时全部不放 ----
-  @media (prefers-reduced-motion: no-preference) {
-    .yh-panel {
-      animation: yh-panel-in 0.2s ease-out;
-    }
-    .yh-orb.is-updating::after {
-      animation: yh-spin 1.1s linear infinite;
-    }
-    .yh-orb.is-updating .yh-orb-mark {
-      animation: yh-flicker 1.4s ease-in-out infinite;
-    }
-    .yh-panel.is-updating .yh-progress i {
-      animation: yh-slide 1.3s ease-in-out infinite;
-    }
-  }
-  @keyframes yh-panel-in {
-    from {
-      opacity: 0;
-      transform: scale(0.985);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
-  }
-  @keyframes yh-spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @keyframes yh-flicker {
-    0%,
-    100% {
-      opacity: 1;
-      transform: scale(1);
-    }
-    50% {
-      opacity: 0.75;
-      transform: scale(0.92, 0.96);
-    }
-  }
-  @keyframes yh-slide {
-    from {
-      left: -40%;
-    }
-    to {
-      left: 100%;
-    }
-  }
-}
-</style>
+<style lang="scss" src="./面板样式.scss"></style>

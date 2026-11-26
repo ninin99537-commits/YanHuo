@@ -78,6 +78,10 @@ export interface 所闻 {
   关系: 地缘关系;
   /** 公告(官方/公开渠道, 且没有辗转) / 传言 */
   公告: boolean;
+  /** 未到达时的原因: 传不到(超出传播范围) / 在途(还在传讯路上) */
+  原因?: '传不到' | '在途';
+  /** 仅 原因 === '在途' 时有值: 预计还需几个世界日传到主角所在地 */
+  预计剩余天数?: number;
   /** 只在 最新=false 时有: 所在地听到的那一步 */
   听到时间?: string;
   听到变化?: string;
@@ -102,7 +106,7 @@ export function 推算所闻(event: WorldEvent, 上下文: 传播上下文): 所
   const 关系 = 判地缘(event, 上下文.data, 上下文.主角所在);
   const 时滞 = 时滞天数(实际传播(event), 关系, 上下文.速度);
   const 公告 = 公告渠道.test(String(event.渠道 ?? ''));
-  if (时滞 == null) return { 到达: false, 最新: false, 关系, 公告 };
+  if (时滞 == null) return { 到达: false, 最新: false, 关系, 公告, 原因: '传不到' };
   const 辗转 = 关系 !== '本地' && 时滞 > 0;
   const 最近天 = 解析日期(event.时间)?.天;
   if (最近天 == null) return { 到达: true, 最新: true, 关系, 公告: 公告 && !辗转 };
@@ -113,7 +117,12 @@ export function 推算所闻(event: WorldEvent, 上下文: 传播上下文): 所
   ];
   const 最晚 = Math.max(...时刻.map(刻 => 刻.天));
   const 已到 = 时刻.filter(刻 => (上下文.今 - 刻.天) / 一日毫秒 >= 时滞);
-  if (!已到.length) return { 到达: false, 最新: false, 关系, 公告 };
+  if (!已到.length) {
+    const 最早 = Math.min(...时刻.map(刻 => 刻.天));
+    const 已过 = (上下文.今 - 最早) / 一日毫秒;
+    const 预计剩余天数 = Math.max(1, Math.ceil(时滞 - 已过));
+    return { 到达: false, 最新: false, 关系, 公告, 原因: '在途', 预计剩余天数 };
+  }
   const 听到 = 已到.reduce((甲, 乙) => (乙.天 > 甲.天 ? 乙 : 甲));
   if (听到.天 >= 最晚) return { 到达: true, 最新: true, 关系, 公告: 公告 && !辗转 };
   return {

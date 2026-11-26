@@ -38,6 +38,14 @@ export function 选工作事件(data: WorldData, settings: Settings, evidence: s
 //      "这轮出现下轮消失"会让主 AI 以为事情结束了, 以前靠那几句话术去防, 现在靠挑选本身稳定。
 // 仍然不变的纪律: 整条选择、绝不截断; 超字符目标只标 overTarget; 保密事件默认不进。
 
+export interface 在途事件 {
+  标题: string;
+  地点: string;
+  传播: string;
+  原因: '在途' | '传不到';
+  预计剩余天数: number | null;
+}
+
 export interface 公开摘要结果 {
   text: string;
   selectedIds: string[];
@@ -49,6 +57,8 @@ export interface 公开摘要结果 {
   overTarget: boolean;
   /** 传播时滞这一轮生效没有; 说明 = 开关开着却没生效的原因(只进日志) */
   传播: { 生效: boolean; 说明: string };
+  /** 因传播时滞暂未传到主角所在地的公开进行中事件（供面板日志页可视化，不注入主 AI） */
+  在途: 在途事件[];
 }
 
 export interface 公开摘要选项 {
@@ -232,6 +242,21 @@ export function 构建公开摘要(data: WorldData, settings: Settings, 选项: 
   };
   // 保密事件不走公共渠道, 不按传播过滤(只在「注入保密事件」开着时进, 与以前一样)
   const 看得见 = (event: WorldEvent) => event.公开性 === '公开' ? (!判定.生效 || 闻(event).到达) : settings.运转.注入保密事件;
+  // 传播时滞拦截的公开进行中事件(在途或超出传播范围): 只给面板展示, 不进注入文本
+  const 在途: 在途事件[] = 判定.生效
+    ? data.事件
+        .filter(event => event.公开性 === '公开' && !闻(event).到达)
+        .map(event => {
+          const 此闻 = 闻(event);
+          return {
+            标题: event.标题,
+            地点: event.地点 || '未知地点',
+            传播: event.传播,
+            原因: 此闻.原因 ?? '传不到',
+            预计剩余天数: 此闻.原因 === '在途' ? (此闻.预计剩余天数 ?? null) : null,
+          };
+        })
+    : [];
   // 远方已经了结、但结局还没传到的事: 所在地仍按最后听到的那一步当传闻在说, 不能凭空消失
   const 结局未到 = 判定.生效
     ? (data.已结束 ?? []).filter(event => event.公开性 === '公开' && 闻(event).到达 && !闻(event).最新)
@@ -282,5 +307,5 @@ export function 构建公开摘要(data: WorldData, settings: Settings, 选项: 
   }
   const text = lines.join('\n\n');
   return { text, selectedIds, omittedIds, 了结Ids, characters: text.length, targetCharacters: policy.摘要目标字符, overTarget: text.length > policy.摘要目标字符,
-    传播: { 生效: 判定.生效, 说明: 判定.说明 } };
+    传播: { 生效: 判定.生效, 说明: 判定.说明 }, 在途 };
 }

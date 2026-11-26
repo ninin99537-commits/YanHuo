@@ -10,7 +10,7 @@ import { syncWorldbookEntry } from './inject';
 import { toastError, toastInfo, toastSuccess, toastWarning } from './toast';
 import { 请求并校验 } from '../共用/模型往返';
 import { createTextFilter } from '../共用/楼层标签过滤';
-import { 事件账目, validateAndNormalize } from './世界数据';
+import { 事件账目, 构建推进弹窗文案, validateAndNormalize } from './世界数据';
 import { 解析世界载荷 } from './解析';
 import { 收集推进输入, type 推进消息 } from './更新输入';
 import { 建立世界时间约束, 描述世界日差, 算跨世界日 } from './时间校验';
@@ -18,6 +18,7 @@ import { 构建公开摘要, 选工作事件 } from './公开摘要';
 import { 版本标签 } from './版本';
 import { 判定给模型, 掷到期判定, 收尾到期判定 } from './到期判定';
 import { 维护节奏 } from './节奏';
+import { 格式化彼方公域切片, 读取彼方公域切片 } from './彼方联动';
 
 export interface 推进结果 {
   状态: '已提交' | '待同步' | '跳过' | '取消' | '失败';
@@ -112,6 +113,8 @@ export async function updateWorld(force = false): Promise<推进结果> {
     const 本轮判定 = settings.运转.到期掷骰 !== false
       ? 掷到期判定(data, typeof crossed === 'object' && crossed ? crossed.最少 : 0)
       : new Map();
+    const 彼方切片 = settings.运转.联动彼方 !== false ? 读取彼方公域切片(host, anchor) : null;
+    const 彼方人物动向 = 彼方切片 ? 格式化彼方公域切片(彼方切片) : '';
     const workEvents = 选工作事件(data, settings, [input.context, input.reply].join('\n'), new Set(本轮判定.keys())).map(event => event.id || event.标题);
     const messages = buildTickMessages({
       world: data, reply: input.reply, replyCount: input.recent.length, context: input.context,
@@ -119,12 +122,15 @@ export async function updateWorld(force = false): Promise<推进结果> {
       worldbook: books?.facts ?? '', memory: books?.memory ?? '', recallContext: JSON.stringify(input.recall),
       工作事件: workEvents, 运转: settings.运转,
       playerName: host.persona.name(), playerDesc: host.persona.description(),
-      破限: settings.运转.破限, 头部填充: settings.运转.头部填充, 头部填充文本: settings.运转.头部填充文本,
-      防截断: settings.运转.防截断, 预填充: settings.运转.预填充,
+      预填充: settings.运转.预填充,
+      世界形势: settings.运转.世界形势,
       世界日程: settings.运转.世界日程, 世界指标: settings.运转.世界指标, 世界密度: settings.运转.世界密度,
       到期判定: 判定给模型(本轮判定),
+      彼方人物动向,
+      自定义提示词: settings.运转.自定义提示词,
     });
     const notes = [...input.warnings, ...(books?.warnings ?? []), '世界书记忆按完整聊天原文独立重扫，未核实与主请求同批',
+      ...(彼方切片 ? [`已联动彼方幕后人物（${彼方切片.条目.length} 人，截至 #${彼方切片.楼层} 楼；仅公域与暗中打算字段）`] : []),
       ...[...本轮判定].map(([键, 判定]) => `到期判定：${data.事件.find(e => (e.id || e.标题) === 键)?.标题 ?? 键} → ${判定.结果}`)];
     debug.开始新记录({ time: Date.now(), model: settings.接口.模型, replyIds: input.recent.map(row => row.message_id), replyPreview: input.reply,
       timeConstraint: timeConstraint.提示, 版本: 版本标签(), request: messages.map(m => `【${m.role}】\n${m.content}`).join('\n\n'),
@@ -132,6 +138,7 @@ export async function updateWorld(force = false): Promise<推进结果> {
     stage = '模型调用';
     const result = await 请求并校验({
       messages, 预填充: settings.运转.预填充, signal,
+      最多尝试: (settings.运转.重试次数 ?? 2) + 1,
       发请求: (prompt, options) => { check(); return chatCompletion(prompt, { ...options, api: settings.接口 }); },
       解析: text => {
         stage = 'JSON解析'; check();
@@ -168,7 +175,7 @@ export async function updateWorld(force = false): Promise<推进结果> {
     if (!commit.落盘) throw Error(commit.说明);
     committed = true;
     store.data = commit.数据;
-    const diff = 事件账目(saved.事件, commit.数据.事件);
+    const diff = 事件账目(data.事件, commit.数据.事件);
     debug.record({ addedEvents: diff.added, updatedEvents: diff.updated, removedEvents: diff.removed, summary: commit.数据.小结,
       备注: [...(debug.log?.备注 ?? notes), ...(candidate.维护备注 ?? [])], 提交状态: '快照已提交', 请求统计: {次数: result.请求次数, 毫秒: result.请求耗时} });
     stage = '世界书同步';
@@ -188,12 +195,12 @@ export async function updateWorld(force = false): Promise<推进结果> {
       debug.record({ 备注: [...(debug.log?.备注 ?? []), projection.传播.说明] });
     }
     debug.record({ 提交状态: synced.状态 === '已同步' ? '快照及世界书已同步' : synced.说明 });
-    console.info(`[烟火] 世界推进完成: ${描述世界日差(data.世界.时间, candidate.世界.时间)} (进行中 ${candidate.事件.length} 件 / 已结束 ${(candidate.已结束 ?? []).length} 件, 新增 ${diff.added.length} 件, 更新 ${diff.updated.length} 件)`);
+    console.info(`[烟火] 世界推进完成: ${描述世界日差(data.世界.时间, candidate.世界.时间)} (进行中 ${candidate.事件.length} 件 / 已结束 ${(candidate.已结束 ?? []).length} 件, 新增 ${diff.added.length} 件, 更新 ${diff.updated.length} 件${diff.removed.length ? `, 了结 ${diff.removed.length} 件` : ''})`);
     if (synced.状态 !== '已同步' && current.运转.注入世界书条目) {
       toastWarning(`快照已保存，${synced.说明}`, '烟火');
       return { 状态: '待同步', 说明: synced.说明 };
     }
-    toastSuccess(`新增${diff.added.length}条，更新${diff.updated.length}条；其余记录完整保留`, '烟火');
+    toastSuccess(构建推进弹窗文案(data, commit.数据, diff, candidate.维护备注), '烟火');
     return { 状态: '已提交', 说明: commit.说明 };
   } catch (error) {
     const cancelled = signal.aborted || generation !== run || (error instanceof Error && error.name === '失效推进');

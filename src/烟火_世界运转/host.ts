@@ -80,8 +80,14 @@ interface HostEjs {
 interface HostWorldbook {
     /** 当前角色卡绑定的世界书: 主世界书 + 附加的(没绑定时为空; 平台抛错也折成空) */
     boundNames(): { primary: string | null; additional: string[] };
+    /** 指定角色卡(角色名或头像文件名)绑定的世界书，供群聊汇总成员世界书 */
+    boundNamesOf?(name: string): { primary: string | null; additional: string[] };
+    /** 群聊成员的角色卡名(头像文件名); 单聊或没进群聊时为空数组 */
+    groupMemberNames?(): string[];
     /** 当前聊天绑定的世界书名; 没有时为 null */
     chatName(): string | null;
+    /** 取/新建当前聊天的世界书: 没绑定时由酒馆建一本并绑上, 返回书名 */
+    getOrCreateChat?(): Promise<string>;
     /** 全局世界书名(设置里"全局"那一栏) */
     globalNames(): string[];
     entries(name: string): Promise<WorldbookEntry[]>;
@@ -211,6 +217,27 @@ function createTavernHost(): Host {
                     return { primary: null, additional: [] };
                 }
             },
+            boundNamesOf: name => {
+                try {
+                    const 绑定 = getCharWorldbookNames(name);
+                    return { primary: 绑定?.primary ?? null, additional: [...(绑定?.additional ?? [])] };
+                }
+                catch {
+                    return { primary: null, additional: [] };
+                }
+            },
+            groupMemberNames: () => {
+                try {
+                    const 群号 = SillyTavern.groupId;
+                    if (!群号)
+                        return [];
+                    const 群 = (SillyTavern.groups ?? []).find((item: { id?: unknown }) => String(item?.id) === String(群号));
+                    return Array.isArray(群?.members) ? [...群.members] : [];
+                }
+                catch {
+                    return [];
+                }
+            },
             chatName: () => {
                 try {
                     return getChatWorldbookName('current') ?? null;
@@ -219,6 +246,7 @@ function createTavernHost(): Host {
                     return null;
                 }
             },
+            getOrCreateChat: () => getOrCreateChatWorldbook('current'),
             globalNames: () => {
                 try {
                     return [...(getGlobalWorldbookNames() ?? [])];

@@ -1,9 +1,17 @@
 {
-    "scripts": {
+  "scripts": {
     "build:dev": "webpack --mode development",
     "build": "webpack --mode production",
     "watch": "webpack --mode development --watch --progress",
-    "typecheck": "tsc --noEmit"
+    "serve": "node tools/static-server.mjs",
+    "dev": "node tools/dev.mjs",
+    "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,css,scss,html,vue}\" --no-error-on-unmatched-pattern",
+    "lint": "eslint",
+    "lint:fix": "eslint --fix",
+    "test": "node tests/run.mjs",
+    "typecheck": "node tests/typecheck-gate.mjs",
+    "dump": "node dump_schema.ts",
+    "sync": "node tavern_sync.mjs"
   },
   "browserslist": [
     "defaults and partially supports es6-module"
@@ -17,6 +25,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@types/showdown": "^2.0.6",
+    "@types/sortablejs": "^1.15.9",
     "@types/toastr": "^2.1.43",
     "@types/webpack": "^5.28.5",
     "@typescript-eslint/parser": "^8.63.0",
@@ -96,6 +105,7 @@
     "pixi.js": "^8.19.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "sortablejs": "^1.15.7",
     "toastr": "^2.1.4",
     "vue": "^3.5.39",
     "vue-final-modal": "^4.5.5",

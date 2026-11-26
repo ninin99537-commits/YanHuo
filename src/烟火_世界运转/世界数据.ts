@@ -1,7 +1,7 @@
 import type { Settings, WorldData, WorldEvent, WorldFaction, WorldMetric, WorldOccasion, WorldSeed } from './schema';
 import { SEED_MATURITY, 迁移枚举值, 迁移旧键名 } from './schema';
 import { EVENT_LIMIT, 内容字段键, 取层, 占位词, 沿用条目, 规范化事件字段, 规范化条目, 事件层 } from './世界字段表';
-import { 校验世界时间, 解析日期, type 世界时间约束 } from './时间校验';
+import { 保底世界时间, 解析日期, type 世界时间约束 } from './时间校验';
 import { 取运转策略, type 运转密度 } from './运转策略';
 
 export function 签事件id(): string {
@@ -103,6 +103,16 @@ export interface 维护选项 {
  */
 const 所在占位 = /^(未知|不详|不明|不清楚|不确定|无|暂无|待定|同上|同前|无变化|—+|-+)$/;
 
+/** 房间/住宅/车厢等私密室内微地点：不能作为宏观「主角所在」（地区级）写入。 */
+const 室内微地点尾 = /(?:卧室|主卧|次卧|睡房|客厅|起居室|书房|厨房|卫生间|洗手间|浴室|厕所|阳台|走廊|楼道|楼梯间|玄关|衣帽间|储藏室|地下室|阁楼|宿舍|寝室|房间|屋子|小屋|出租屋|办公室|会议室|病房|诊室|包厢|包间|电梯|洗手台|车厢|驾驶座|后座|床边|床上|沙发)[里内中旁上]?$/;
+const 室内微地点整 = /^(?:家里|家中|屋里|屋内|室内|房里|房内|车里|车内|床边|床上|(?:主角|玩家|我|他|她|其|自己|自家|某人)的?(?:家|住处|住所|公寓|屋|房|车))$/;
+
+export function 是室内微地点(值: string): boolean {
+  const 文 = String(值 ?? '').trim();
+  if (!文) return false;
+  return 室内微地点整.test(文) || 室内微地点尾.test(文);
+}
+
 function 净所在(值: unknown): string {
   const 文 = String(值 ?? '').trim();
   return 所在占位.test(文) ? '' : 文;
@@ -120,9 +130,19 @@ export function 归到地区(值: string, 名单: readonly string[]): string | n
 export function 定主角所在(给值: unknown, 旧值: string | undefined, 地区名: readonly string[], 正文 = ''): string {
   const 值 = 净所在(文本(给值, '世界.主角所在'));
   const 名单 = 地区名.map(名 => String(名 ?? '').trim()).filter(Boolean);
-  if (值) return 归到地区(值, 名单) ?? 值;
+  if (值) {
+    // 先试归到地区：例如「临江府·主角的卧室」可以直接提取出宏观地区「临江府」
+    const 归 = 归到地区(值, 名单);
+    if (归) return 归;
+    // 对不上已知地区时，拦截「主角的卧室/客厅/宿舍/车内」等纯室内微地点，退回上次地区或正文兜底
+    if (!是室内微地点(值)) return 值;
+  }
   const 上次 = 净所在(旧值);
-  if (上次) return 归到地区(上次, 名单) ?? 上次;
+  if (上次) {
+    const 归旧 = 归到地区(上次, 名单);
+    if (归旧) return 归旧;
+    if (!是室内微地点(上次)) return 上次;
+  }
   // ⑤ 比"名字结尾位置": 「…进了临江府。」里 临江 与 临江府 起点相同, 比起点会让先遍历到的短名赢;
   // 结尾更靠后的才是正文最后提到的那个, 同结尾取更长的。
   let 最后 = '';
@@ -172,13 +192,15 @@ export function validateAndNormalize(原载荷: any, oldData: WorldData, 时间�
   // v2.10.1: 模型照旧写的老层名/老字段名(地域/势力/伏笔…、前情/当权者…)先搬到新名下
   const parsed = 迁移旧键名(原载荷);
   if (!对象(parsed.世界)) throw Error('缺少「世界」对象(应包含 时间/氛围/总览)，请重新输出');
-  const time = 文本(parsed.世界.时间, '世界.时间');
-  if (!time) throw Error('「世界.时间」为空；没有新时间依据时原样沿用上次时间');
-  if (时间约束) 校验世界时间(time, 时间约束);
+  const rawTime = 文本(parsed.世界.时间, '世界.时间');
+  if (!rawTime) throw Error('「世界.时间」为空；没有新时间依据时原样沿用上次时间');
+  const 时间结果 = 保底世界时间(rawTime, oldData.世界.时间, 时间约束);
+  const time = 时间结果.时间;
   if (!Array.isArray(parsed.事件)) throw Error('「事件」必须是数组(无事件时返回 [])');
   for (const layer of ['地区', '形势', '指标', '组织']) if (parsed[layer] !== undefined && !对象(parsed[layer])) throw Error(`「${layer}」必须是对象`);
   for (const layer of ['暗线', '日程']) if (parsed[layer] !== undefined && !Array.isArray(parsed[layer])) throw Error(`「${layer}」必须是数组`);
   const notes: string[] = [];
+  if (时间结果.备注) notes.push(时间结果.备注);
   const policy = 取运转策略({ 世界密度: options.密度 ?? options.运转?.世界密度 ?? '正常', ...options.运转 });
   const oldEvents = oldData.事件 ?? [];
   const oldById = new Map(oldEvents.filter(e => e.id).map(e => [e.id, e]));
@@ -199,6 +221,7 @@ export function validateAndNormalize(原载荷: any, oldData: WorldData, 时间�
     if (old && used.has(old)) { notes.push(`重复认领「${old.标题}」，只接受一份完整更新`); continue; }
     if (!old && (terminalIds.has(rawId) || terminalTitles.has(title))) { notes.push(`「${title}」已经结束，未因旧回忆重开`); continue; }
     if (old && workIds && !workIds.has(old.id || old.标题)) {
+      notes.push(`「${old.标题}」不在本轮工作集内，已跳过修改`);
       continue;
     }
     const event = normalizeEvent(raw, time, old);
@@ -270,7 +293,9 @@ export function validateAndNormalize(原载荷: any, oldData: WorldData, 时间�
     factions[name] = 沿用条目(factionLayer, raw, (oldData.组织?.[name] as unknown as Record<string, unknown>)) as unknown as WorldFaction;
   }
   const regions = normalizeLayer(parsed.地区, oldData.地区 ?? {}, 取层('地区').容量, 内容字段键(取层('地区')));
-  const trends = normalizeLayer(parsed.形势, oldData.形势 ?? {}, 取层('形势').容量, 内容字段键(取层('形势')));
+  const trends = options.运转?.世界形势 === false
+    ? (oldData.形势 ?? {})
+    : normalizeLayer(parsed.形势, oldData.形势 ?? {}, 取层('形势').容量, 内容字段键(取层('形势')));
   const metricLayer = 取层('指标');
   const metrics: Record<string, WorldMetric> = {};
   const metricRaw = options.运转?.世界指标 === false ? oldData.指标 ?? {} : normalizeLayer(parsed.指标, oldData.指标 ?? {}, metricLayer.容量, 内容字段键(metricLayer));
@@ -369,4 +394,37 @@ export function 事件账目(oldEvents: WorldEvent[], newEvents: WorldEvent[]) {
   }
   const removed = oldEvents.filter(e => !keys.has(identity(e))).map(e => e.标题);
   return { added, updated, removed };
+}
+
+/** 悬浮球推进完成弹窗文案：同时反映事件新增/更新/了结、其它档案层变化以及未入账候选提醒，避免误报「0新增0更新」。 */
+export function 构建推进弹窗文案(
+  oldData: Pick<WorldData, '世界' | '地区' | '形势' | '暗线' | '日程' | '指标' | '组织'>,
+  newData: Pick<WorldData, '世界' | '地区' | '形势' | '暗线' | '日程' | '指标' | '组织'>,
+  diff: { added: readonly string[]; updated: readonly string[]; removed: readonly string[] },
+  维护备注: readonly string[] = [],
+): string {
+  const 事件项 = [
+    diff.added.length ? `新增${diff.added.length}条` : '',
+    diff.updated.length ? `更新${diff.updated.length}条` : '',
+    diff.removed.length ? `了结${diff.removed.length}条` : '',
+  ].filter(Boolean);
+  const 档案层名 = (['组织', '地区', '形势', '暗线', '日程', '指标'] as const).filter(
+    层 => JSON.stringify(oldData[层] ?? null) !== JSON.stringify(newData[层] ?? null),
+  );
+  const 世界变动 = JSON.stringify(oldData.世界 ?? null) !== JSON.stringify(newData.世界 ?? null);
+  const 被拦数 = 维护备注.filter(条 => /超过本轮准入额度|不在本轮工作集内/.test(条)).length;
+
+  let 主句: string;
+  if (事件项.length > 0) {
+    主句 = 档案层名.length > 0
+      ? `事件${事件项.join('、')}；同步更新${档案层名.join('、')}`
+      : `事件${事件项.join('、')}；其余记录完整保留`;
+  } else if (档案层名.length > 0) {
+    主句 = `事件无变动；已更新${档案层名.join('、')}`;
+  } else if (世界变动) {
+    主句 = '事件无变动；已更新世界时间与概览';
+  } else {
+    主句 = '本轮无新变化；其余记录完整保留';
+  }
+  return 被拦数 > 0 ? `${主句}（另有${被拦数}条候选未入账，见日志）` : 主句;
 }

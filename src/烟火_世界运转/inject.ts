@@ -76,7 +76,7 @@ function 匹配绿灯键(entry: any, 项: 绿灯条目): boolean {
   if (entry?.extra?.yanhuoRole && entry?.extra?.yanhuoKey) {
     return entry.extra.yanhuoRole === 项.角色 && entry.extra.yanhuoKey === 项.键;
   }
-  return entry?.name === 绿灯条目名(项.角色, 项.键);
+  return entry?.name === 绿灯条目名(项.角色, 项.显示名);
 }
 
 let warnedNoWorldbook = false;
@@ -208,7 +208,7 @@ export async function syncWorldbookEntry(data: WorldData, enabled: boolean, sett
               if (!项) return entry;
               return {
                 ...entry,
-                name: 绿灯条目名(项.角色, 项.键),
+                name: 绿灯条目名(项.角色, 项.显示名),
                 content: 项.内容,
                 enabled: true,
                 strategy: {
@@ -250,7 +250,7 @@ export async function syncWorldbookEntry(data: WorldData, enabled: boolean, sett
         const 项 = 绿灯们[i];
         if (existingGreen.some(e => 匹配绿灯键(e, 项))) continue;
         待建.push({
-          name: 绿灯条目名(项.角色, 项.键),
+          name: 绿灯条目名(项.角色, 项.显示名),
           content: 项.内容,
           enabled: true,
           probability: 100,

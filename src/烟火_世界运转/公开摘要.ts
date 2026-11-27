@@ -341,7 +341,10 @@ export function 构建公开摘要(data: WorldData, settings: Settings, 选项: 
 
 export interface 绿灯条目 {
   角色: '组织' | '地区' | '事态' | '往事';
+  /** 稳定标识（组织/地区用名称，事态/往事用事件键/id，用于世界书 extra.yanhuoKey 去重与更新） */
   键: string;
+  /** 世界书里给人看的条目后缀名（事态/往事用事件标题，避免显示成 ev_xxx） */
+  显示名: string;
   关键词: string[];
   内容: string;
 }
@@ -387,6 +390,7 @@ export function 构建绿灯条目(
     条目们.push({
       角色: '组织',
       键,
+      显示名: 键,
       关键词,
       内容: `[烟火 · 组织档案]\n组织：${键}\n${正文}`,
     });
@@ -401,16 +405,23 @@ export function 构建绿灯条目(
     条目们.push({
       角色: '地区',
       键,
+      显示名: 键,
       关键词: [键],
       内容: `[烟火 · 地区档案]\n地区：${键}\n${正文}`,
     });
   }
 
+  const 今 = 解析日期(data.世界?.时间 ?? '')?.天;
+  const 判定 = 判传播(settings.运转?.传播时滞 !== false, data.传讯速度, 当前所在, 今, data);
   const 摘要缓存 = (落选事件键 && 蓝灯了结键) ? null : 构建公开摘要(data, settings, { 主角所在: 当前所在 });
   const 落选集合 = new Set(落选事件键 ?? 摘要缓存!.omittedIds);
   const 蓝灯了结集合 = new Set(蓝灯了结键 ?? 摘要缓存!.了结Ids);
   if (落选集合.size > 0) {
-    for (const event of data.事件 ?? []) {
+    const 事态池 = [
+      ...(data.事件 ?? []),
+      ...(判定.生效 ? (data.已结束 ?? []).filter(e => e.公开性 === '公开' && (() => { const w = 推算所闻(e, 判定.上下文!); return w.到达 && !w.最新; })()) : []),
+    ];
+    for (const event of 事态池) {
       if (event.公开性 !== '公开') continue;
       if (!落选集合.has(事件键(event))) continue;
       const 标题 = String(event.标题 ?? '').trim();
@@ -424,18 +435,25 @@ export function 构建绿灯条目(
         组织词,
         ...提取负责人关键词(event.代表人物 ?? ''),
       ].filter(w => w.length >= 2 && !关键词占位词.has(w))));
-      const 带背景 = !当前所在 || 属于本地(event, 当前所在);
+      let 正文文本: string;
+      if (判定.生效) {
+        const 此闻 = 推算所闻(event, 判定.上下文!);
+        if (!此闻.到达) continue;
+        正文文本 = 此闻.最新 ? 事件文本(event, 此闻.关系 === '本地', 来路标注(此闻)) : 传闻文本(event, 此闻);
+      } else {
+        const 带背景 = !当前所在 || 属于本地(event, 当前所在);
+        正文文本 = 事件文本(event, 带背景);
+      }
       条目们.push({
         角色: '事态',
         键: 事件键(event),
+        显示名: 标题,
         关键词: 关键词.length ? 关键词 : [标题],
-        内容: `[烟火 · 公开事态]\n${事件文本(event, 带背景)}`,
+        内容: `[烟火 · 公开事态]\n${正文文本}`,
       });
     }
   }
 
-  const 今 = 解析日期(data.世界?.时间 ?? '')?.天;
-  const 判定 = 判传播(settings.运转?.传播时滞 !== false, data.传讯速度, 当前所在, 今, data);
   for (const event of data.已结束 ?? []) {
     if (event.公开性 !== '公开' || !event.结束原因) continue;
     const 键 = 事件键(event);
@@ -457,6 +475,7 @@ export function 构建绿灯条目(
     条目们.push({
       角色: '往事',
       键,
+      显示名: 标题,
       关键词: 关键词.length ? 关键词 : [标题],
       内容: `[烟火 · 往事结局]\n已结束事态「${标题}」的公开结果${时间标注 ? `（${时间标注}）` : ''}：\n${event.结束原因}`,
     });

@@ -14,7 +14,6 @@
 // 才不被 iframe 的 clip-path 裁掉, 所以这里的 parentWin/parentDoc 是那一个 document。
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { 建偏好会话, type 界面偏好, type 偏好存储 } from './界面偏好';
-import { 取收纳坞, 取收纳坞入口 } from './收纳坞';
 
 export type 主题模式 = 'dark' | 'light';
 
@@ -178,19 +177,11 @@ export function 使用面板机制(配置: 面板机制配置) {
   const anchorY = ref<number>(-100);
 
   /**
-   * 贴球定位的统一取点, 三档优先级:
-   *   ① **被收纳坞收走** → 贴坞里属于本球的那个代理图标。收纳后坞把球**藏起来**(visibility:hidden)
-   *      却**没搬走球 iframe**, 所以贴 iframe 会落在"球原来的位置" —— 就是用户看到的现象。
-   *      图标 28×28 比球 40×40 小, 半径随图标走, 贴球间距自然跟着缩。
-   *   ② 球 iframe 的**真实矩形** → 本插件自己挪球时用它;
-   *   ③ 逻辑锚点兜底(还没上屏 / 量不到)。
+   * 贴球定位的统一取点, 两档优先级:
+   *   ① 球 iframe 的**真实矩形** → 无论本插件自己挪球还是被外部收纳坞摆位/缩放, 都以真实矩形为准;
+   *   ② 逻辑锚点兜底(还没上屏 / 量不到)。
    */
   function 球锚点(): { x: number; y: number; r: number } {
-    const 入口 = 取收纳坞入口(parentWin.value?.document, frame.value);
-    if (入口) {
-      const r = 入口.getBoundingClientRect();
-      if (r.width || r.height) return { x: r.left + r.width / 2, y: r.top + r.height / 2, r: Math.max(r.width, r.height) / 2 };
-    }
     const 实 = 球矩形.value;
     if (实) return { x: 实.cx, y: 实.cy, r: Math.max(实.w, 实.h) / 2 };
     return { x: anchorX.value, y: anchorY.value, r: CLOSED_SIZE / 2 };
@@ -199,23 +190,8 @@ export function 使用面板机制(配置: 面板机制配置) {
   /** 贴球锚点的**响应式快照**: 弹条等下游 watch 它, 免得各自去调非响应式的 球锚点() */
   const 贴球锚点 = ref<{ x: number; y: number; r: number }>({ x: -100, y: -100, r: CLOSED_SIZE / 2 });
 
-  /** 坞被拖动/折叠/换锚点时不改变球 iframe, 所以"盯坞"与"盯球"是两条独立通道 */
-  let 坞观察器: MutationObserver | null = null;
-  function 盯住收纳坞(): void {
-    if (坞观察器 || typeof MutationObserver === 'undefined') return;
-    const 坞 = 取收纳坞(parentWin.value?.document);
-    if (!坞) return;
-    坞观察器 = new MutationObserver(() => 同步贴球锚点());
-    坞观察器.observe(坞, { attributes: true, attributeFilter: ['style', 'class'], childList: true, subtree: true });
-  }
-
-  /**
-   * 同步"贴球锚点"到 toast 与下游(弹条/气泡)。
-   * **不能只在球动了时才同步**: 坞拖动/折叠/释放时球 iframe 一动不动, 锚点却变了 —— 所以按锚点值判重。
-   */
+  /** 同步"贴球锚点"到 toast 与下游(弹条/气泡), 按锚点值判重。 */
   function 同步贴球锚点(强制 = false): void {
-    盯住收纳坞();
-    同步球指针();
     量球();
     const 锚 = 球锚点();
     const 旧 = 贴球锚点.value;
@@ -317,23 +293,9 @@ export function 使用面板机制(配置: 面板机制配置) {
     height: `${panelH.value}px`,
   }));
 
-  /**
-   * 收纳坞把球**藏起来**却**没搬走球 iframe**, 那个 40×40 就悬在原地白吃点击。
-   * 收纳中且面板没开 → 关掉自己 iframe 的指针事件; 面板一开 / 球被释放 → 立刻还回来。
-   * 只碰本插件自己建的 iframe, 不去动坞。
-   * (坞转发点击用的是 dispatchEvent, 不走命中测试, 所以关掉指针事件不影响坞点开面板)
-   */
-  function 同步球指针(): void {
-    const target = frame.value;
-    if (!target) return;
-    const 被收纳 = !!取收纳坞入口(parentWin.value?.document, target);
-    target.style.pointerEvents = 被收纳 && !panelOpen.value ? 'none' : 'auto';
-  }
-
   function applyFrame() {
     const target = frame.value;
     if (!target) return;
-    同步球指针();
     兜底球心();
     if (!panelOpen.value) {
       // 关闭: iframe 缩到球的大小跟随锚点, 不遮挡酒馆其他区域。
@@ -635,8 +597,6 @@ export function 使用面板机制(配置: 面板机制配置) {
     量球定时器 = null;
     量球观察器?.disconnect();
     量球观察器 = null;
-    坞观察器?.disconnect();
-    坞观察器 = null;
     removePanelShadow();
   });
 

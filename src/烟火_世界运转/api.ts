@@ -9,9 +9,13 @@ import { getSettings } from './settings';
 import type { ApiConfig } from './schema';
 
 export function normalizeBaseUrl(url: string): string {
-  const trimmed = (url ?? '').trim().replace(/\/+$/, '');
+  const raw = (url ?? '').trim();
+  if (!raw) return '';
+  if (raw.endsWith('#')) return raw.slice(0, -1).trim().replace(/\/+$/, '');
+  const trimmed = raw.replace(/\/+$/, '');
   if (!trimmed) return '';
-  return /\/v\d+$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
+  // 路径中已包含版本段（如 /v1、/v2/tokenplan/personal、/v1beta/openai、/api/v3）时不再强行补 /v1
+  return /\/v\d+(?:[a-z]+\d*)?(?:\/|$)/i.test(trimmed) ? trimmed : `${trimmed}/v1`;
 }
 
 /** 脱敏接口地址(隐藏地址中可能携带的 token/key 查询参数), 用于错误日志 */

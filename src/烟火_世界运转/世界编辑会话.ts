@@ -111,6 +111,9 @@ export function 打开条目会话(数据: WorldData, 层: 世界条目层, 键 
     const 初始 = 名字字段 ? 名 : (原条目 || !f.枚举 ? '' : String(f.枚举[0]));
     fields[f.键] = String(原条目?.[f.键] ?? 初始);
   }
+  if (层 === '地区') {
+    fields['邻近地区'] = String(原条目?.['邻近地区'] ?? '');
+  }
   const 草稿: 条目草稿 = { layer: 层, key: 名, fields };
   return {
     目标: { 种类: '条目', 层, 键: 名 },

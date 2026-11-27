@@ -46,7 +46,7 @@ import { 事件枚举, 取层, 表单定义 } from './世界字段表';
 import type { 任意编辑会话, 事件编辑会话, 组织编辑会话, 条目编辑会话, 概述编辑会话 } from './世界编辑会话';
 import { 取消会话, 打开事件会话, 打开组织会话, 打开概述会话, 打开条目会话, 提交会话 } from './世界编辑会话';
 import type { 世界条目层 } from './世界数据变更';
-import { 建世界数据环境, 导出初始世界模板, 导入初始世界模板, 清空世界, 移除事件, 移除组织, 移除世界条目 } from './世界数据变更';
+import { 建世界数据环境, 导出初始世界模板, 导入初始世界模板, 清空世界, 添加组织, 移除事件, 移除组织, 移除世界条目 } from './世界数据变更';
 // 面板里与渲染无关的规则(筛事件 / 两段日志文本)收在 面板动作.ts, 视图只做绑定
 import { 筛事件, 构建推进记录, 构建报错报告 } from './面板动作';
 // 列表类设置的文本 → 名单: 三家统一按换行切(逗号/顿号不再当分隔符)
@@ -508,7 +508,28 @@ const factionRelatedEvents = computed(() =>
 function startEditFaction() {
   // 名字不在清单里(那一行刚被推进换掉)就不打开, 与以前"没有可编辑的组织就不进编辑态"一致
   const 新会话 = 打开组织会话(data.value, selectedFaction.value);
-  if (新会话) 会话.value = 新会话;
+  if (新会话) {
+    newFactionDraft.value = null;
+    会话.value = 新会话;
+  }
+}
+const newFactionDraft = ref<{ 名称: string; 目标: string; 动向: string; 背景: string; 覆盖范围: string; 外部关系: string; 负责人: string } | null>(null);
+function startAddFaction() {
+  取消编辑();
+  newFactionDraft.value = { 名称: '', 目标: '', 动向: '', 背景: '', 覆盖范围: '', 外部关系: '', 负责人: '' };
+}
+function saveNewFaction() {
+  if (!newFactionDraft.value) return;
+  const { 名称, ...草稿 } = newFactionDraft.value;
+  const 结果 = 添加组织(data.value, 名称, 草稿, 建世界数据环境());
+  if (结果.拒绝) {
+    toastWarning(结果.拒绝, '烟火');
+    return;
+  }
+  const 新名 = 名称.trim();
+  newFactionDraft.value = null;
+  if (新名) selectedFaction.value = 新名;
+  toastSuccess(结果.说明);
 }
 function saveFactionEdit() {
   const 结果 = 提交会话(组织会话.value, data.value, 建世界数据环境());
@@ -1512,7 +1533,23 @@ function toggleTrail(key: string) {
                         <select v-model="editingEvent!.草稿.公开性" class="yh-input yh-select">
                           <option v-for="s in 公开性选项" :key="s" :value="s">{{ s }}</option>
                         </select>
+                        <input
+                          v-model="editingEvent!.草稿.下次判定时间"
+                          class="yh-input"
+                          placeholder="下次判定时间（可选，同世界时间格式）"
+                        />
                       </div>
+                      <input
+                        v-model="editingEvent!.草稿.等待条件"
+                        class="yh-input"
+                        placeholder="等待条件（可选，未达成前保持当前阶段）"
+                      />
+                      <input
+                        v-if="editingEvent!.草稿.阶段 === '已结束' || editingEvent!.草稿.结束原因"
+                        v-model="editingEvent!.草稿.结束原因"
+                        class="yh-input"
+                        placeholder="结束原因（阶段为已结束时填写）"
+                      />
                       <div class="yh-edit-actions">
                         <button class="yh-btn yh-btn-primary yh-btn-sm" @click="saveEventEdit">
                           <PhCheck :size="12" weight="bold" />保存
@@ -1583,7 +1620,48 @@ function toggleTrail(key: string) {
 
 <!-- ============ 组织 ============ -->
           <section class="yh-sec yh-sec-factions" :class="{ 'is-active-pane': 当前分区 === 'factions' }" data-sec="factions">
-            <h3 class="yh-sec-title">组织<span>{{ factionEntries.length }} 个</span></h3>
+            <h3 class="yh-sec-title">
+              组织<span>{{ factionEntries.length }} 个</span>
+              <button class="yh-btn yh-btn-sm yh-world-add" @click="startAddFaction">
+                <PhPlus :size="11" weight="bold" />新增
+              </button>
+            </h3>
+            <div v-if="newFactionDraft" class="yh-inline-edit">
+              <label class="yh-field">
+                <span class="yh-field-label">组织名称</span>
+                <input v-model="newFactionDraft.名称" type="text" class="yh-input" placeholder="如 临江商会 / 某科技公司" />
+              </label>
+              <label class="yh-field">
+                <span class="yh-field-label">目标</span>
+                <textarea v-model="newFactionDraft.目标" class="yh-input yh-textarea" rows="2"></textarea>
+              </label>
+              <label class="yh-field">
+                <span class="yh-field-label">动向</span>
+                <textarea v-model="newFactionDraft.动向" class="yh-input yh-textarea" rows="2"></textarea>
+              </label>
+              <label class="yh-field">
+                <span class="yh-field-label">背景</span>
+                <textarea v-model="newFactionDraft.背景" class="yh-input yh-textarea" rows="2"></textarea>
+              </label>
+              <label class="yh-field">
+                <span class="yh-field-label">覆盖范围</span>
+                <input v-model="newFactionDraft.覆盖范围" type="text" class="yh-input" placeholder="地区、行业或渠道" />
+              </label>
+              <label class="yh-field">
+                <span class="yh-field-label">外部关系</span>
+                <textarea v-model="newFactionDraft.外部关系" class="yh-input yh-textarea" rows="2"></textarea>
+              </label>
+              <label class="yh-field">
+                <span class="yh-field-label">负责人</span>
+                <input v-model="newFactionDraft.负责人" type="text" class="yh-input" placeholder="如 会长·陈远" />
+              </label>
+              <div class="yh-edit-actions">
+                <button class="yh-btn yh-btn-primary yh-btn-sm" @click="saveNewFaction">
+                  <PhCheck :size="12" weight="bold" />保存
+                </button>
+                <button class="yh-btn yh-btn-sm" @click="newFactionDraft = null">取消</button>
+              </div>
+            </div>
             <div v-if="factionEntries.length > 0" class="yh-fac-layout">
             <div class="yh-fac-chips">
               <button
@@ -1628,6 +1706,10 @@ function toggleTrail(key: string) {
                   <div class="yh-detail-row">
                     <dt>外部关系</dt>
                     <dd>{{ selectedFactionData.外部关系 || '—' }}</dd>
+                  </div>
+                  <div v-if="selectedFactionData.背景" class="yh-detail-row">
+                    <dt>背景</dt>
+                    <dd>{{ selectedFactionData.背景 }}</dd>
                   </div>
                   <div class="yh-detail-row">
                     <dt>关联事件</dt>

@@ -157,7 +157,7 @@ export async function syncWorldbookEntry(data: WorldData, enabled: boolean, sett
     }
 
     const targetBook = wbName;
-    return await 串行写世界书(targetBook, async () => {
+    const result = await 串行写世界书(targetBook, async () => {
       if (!仍属当前()) return { 状态: '待同步', 说明: '聊天、分支或世界修订已变化，本次旧投影未写入世界书' };
       const 摘要 = 构建公开摘要(data, settings);
       const content = 摘要.text;
@@ -270,8 +270,25 @@ export async function syncWorldbookEntry(data: WorldData, enabled: boolean, sett
       }
       warnedNoWorldbook = false;
       const 绿灯说明 = 绿灯们.length > 0 ? `（含 ${绿灯们.length} 条绿灯档案）` : '';
-      return { 状态: '已同步', 说明: `公开摘要已同步到${目标}「${targetBook}」${绿灯说明}` };
+      return { 状态: '已同步' as const, 说明: `公开摘要已同步到${目标}「${targetBook}」${绿灯说明}` };
     });
+    // 切换写入目标（角色卡主世界书 ↔ 聊天世界书）后，自动清理另一本世界书里残留的旧烟火条目，避免主 AI 同时读到两份冲突状态
+    if (result.状态 === '已同步' && 仍属当前()) {
+      for (const otherBook of 收集可清理世界书(host).filter(name => name !== targetBook)) {
+        try {
+          await 串行写世界书(otherBook, async () => {
+            if (!仍属当前()) return;
+            const entries = await useHost().worldbook.entries(otherBook);
+            if (entries.some(isYanhuoEntry)) {
+              await useHost().worldbook.remove(otherBook, isYanhuoEntry);
+            }
+          });
+        } catch (error) {
+          console.warn(`[烟火] 清理旧世界书「${otherBook}」残留条目失败:`, error);
+        }
+      }
+    }
+    return result;
   } catch (error) {
     console.error('[烟火] 同步世界动向到世界书失败:', error);
     return { 状态: '待同步', 说明: `世界书同步未完成：${error instanceof Error ? error.message : String(error)}` };

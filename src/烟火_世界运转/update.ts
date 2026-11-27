@@ -188,7 +188,7 @@ export async function updateWorld(force = false): Promise<推进结果> {
       () => generation === run && !signal.aborted && 归属仍有效(syncOrigin));
     const projection = 构建公开摘要(commit.数据, current);
     if (projection.overTarget) {
-      debug.record({ 备注: [...notes, ...(candidate.维护备注 ?? []), `公开摘要${projection.characters}字符超过目标${projection.targetCharacters}字符：完整条目未截断，不冒充token计数`] });
+      debug.record({ 备注: [...(debug.log?.备注 ?? notes), `公开摘要${projection.characters}字符超过目标${projection.targetCharacters}字符：完整条目未截断，不冒充token计数`] });
       toastWarning('公开摘要超过字符目标，内容仍完整保留；可调整整条摘要名额', '烟火');
     }
     // 传播时滞开着却没生效(传讯速度未选 / 主角所在未知 / 历法不可换算): 只记进日志, 不打扰

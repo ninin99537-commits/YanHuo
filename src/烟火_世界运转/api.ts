@@ -55,11 +55,15 @@ export interface ChatMessage {
   content: string;
 }
 
+/** 单次请求兜底超时：7 分钟（防止反代或推理上游挂死导致推进锁永久不释放） */
+export const 兜底超时毫秒 = 7 * 60 * 1000;
+
 export interface ChatOptions {
   signal?: AbortSignal;
   temperature?: number;
   max_tokens?: number;
   api?: ApiConfig;
+  timeoutMs?: number;
 }
 
 export async function chatCompletion(messages: ChatMessage[], options: ChatOptions = {}): Promise<string> {
@@ -98,10 +102,20 @@ export async function chatCompletion(messages: ChatMessage[], options: ChatOptio
     }
   };
   let cancelHandler: (() => void) | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutMs = options.timeoutMs ?? 兜底超时毫秒;
   const cancelBlocker = new Promise<never>((_, reject) => {
     if (!abortSignal) return;
     cancelHandler = () => reject(Error('用户已中断本次推进'));
     abortSignal.addEventListener('abort', cancelHandler, { once: true });
+  });
+  const timeoutBlocker = new Promise<never>((_, reject) => {
+    if (!(timeoutMs > 0)) return;
+    timeoutId = setTimeout(() => {
+      stopHandler();
+      const mins = Math.round(timeoutMs / 60000);
+      reject(Error(`生成超时(已等待 ${mins >= 1 ? `${mins} 分钟` : `${Math.round(timeoutMs / 1000)} 秒`}无响应，已自动释放请求锁，请检查接口状态后重试)`));
+    }, timeoutMs);
   });
   if (abortSignal) abortSignal.addEventListener('abort', stopHandler, { once: true });
   try {
@@ -125,6 +139,7 @@ export async function chatCompletion(messages: ChatMessage[], options: ChatOptio
         ordered_prompts: orderedPrompts,
       }),
       cancelBlocker,
+      timeoutBlocker,
     ]);
     const content = typeof result === 'string' ? result : (result as { content?: string })?.content ?? '';
     if (!content) {
@@ -133,13 +148,14 @@ export async function chatCompletion(messages: ChatMessage[], options: ChatOptio
     return content;
   } catch (error) {
     if (abortSignal?.aborted) throw Error('用户已中断本次推进', { cause: error });
-    if (error instanceof Error && /无法连接到|接口返回错误|响应中|获取模型/.test(error.message)) throw error;
+    if (error instanceof Error && /无法连接到|接口返回错误|响应中|获取模型|已自动释放请求锁/.test(error.message)) throw error;
     if (error instanceof Error && /Gateway|timeout|time-out|超时/i.test(error.message)) {
       throw Error(`生成超时(可能是模型思维链/推理过长或接口负载高)。调小「最大输出Token」后重试。原始错误: ${error.message}`, { cause: error });
     }
     const errText = error instanceof Error ? error.message : String(error);
     throw Error(`通过酒馆服务器请求失败(${requestContext()}): ${errText}${policyBlockHint(errText)}`, { cause: error });
   } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId);
     if (abortSignal) abortSignal.removeEventListener('abort', stopHandler);
     if (abortSignal && cancelHandler) abortSignal.removeEventListener('abort', cancelHandler);
   }

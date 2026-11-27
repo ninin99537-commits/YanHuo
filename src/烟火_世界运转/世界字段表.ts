@@ -25,12 +25,13 @@ import { EVENT_SCALE, EVENT_SECRECY, EVENT_SPREAD, EVENT_STAGE, METRIC_TREND, SE
 // 容量上限: 以前写在 state.ts(五层与组织)与世界数据变更.ts(又抄一遍层上限)
 // ---------------------------------------------------------------------------
 
-export const REGION_LIMIT = 8;
-export const TREND_LIMIT = 5;
-export const SEED_LIMIT = 5;
-export const OCCASION_LIMIT = 6;
-export const METRIC_LIMIT = 6;
-export const FACTION_LIMIT = 8;
+export const REGION_LIMIT = 16;
+export const TREND_LIMIT = 8;
+export const SEED_LIMIT = 8;
+export const OCCASION_LIMIT = 8;
+export const METRIC_LIMIT = 8;
+/** 活跃组织上限：兼顾宏观大厂/大势力与本地/行业圈层组织，完整档案按需走绿灯条目，16 个不挤占蓝灯上下文 */
+export const FACTION_LIMIT = 16;
 /** 活跃事件的容量上限(`事件` 只装"此刻在发生的事"; 墓碑住在 `已结束`, 2026-11-02 起完整保留、不设条数上限 ——
  *  原来的 ENDED_EVENT_LIMIT(6) 从那时起已无人使用, 2026-11-22 删除) */
 export const EVENT_LIMIT = 30;

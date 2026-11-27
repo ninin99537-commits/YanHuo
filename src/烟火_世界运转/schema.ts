@@ -41,6 +41,11 @@ export const SettingsSchema = z
           .number()
           .default(1)
           .transform(value => Math.max(1, Math.round(value))),
+        /** 自动推进最短正文字数(0~5000, 默认 200; 0=不限制): 过滤标签后低于该字数疑似截断/极短回复, 跳过自动推进 */
+        自动推进最短字数: z.coerce
+          .number()
+          .default(200)
+          .transform(value => Math.max(0, Math.min(5000, Math.round(value)))),
         /** 楼层快照保留份数: 世界状态随推进楼层保留最近 N 份(删楼=回退到更早快照, 窗口耗尽世界归零)。调大删楼回退更远更保险, 但每份几KB~30KB, 聊天文件随之变大 */
         快照保留份数: z.coerce
           .number()
@@ -191,6 +196,13 @@ export interface WorldFaction {
   负责人: string;
 }
 
+/** 已解体/消亡的组织归档(破产/解散/覆灭/兼并): 从活跃组织移出腾出名额, 完整保留历史原因与背景 */
+export interface WorldArchivedFaction extends WorldFaction {
+  名称: string;
+  解体时间?: string;
+  结束原因?: string;
+}
+
 /** 地区: 城市/地区/星区/国度等常驻实体, 事件的地理来源 */
 export interface WorldRegion {
   /** 概况: 地理、物产、风貌(慢变) */
@@ -217,6 +229,13 @@ export interface WorldTrend {
   走向: string;
   /** 背景: 演变因果(怎么走到今天), 不复述概况 */
   背景: string;
+}
+
+/** 已平息/终结的形势归档: 从活跃形势移出腾出名额, 完整保留历史原因与背景 */
+export interface WorldArchivedTrend extends WorldTrend {
+  名称: string;
+  平息时间?: string;
+  结束原因?: string;
 }
 
 /** 暗线: 埋下的长期线头, 跨回合成熟后爆发为事件 */
@@ -324,6 +343,8 @@ export interface WorldData {
   上次注入?: string[];
   已失效暗线?: WorldSeed[];
   已过期日程?: WorldOccasion[];
+  已解体组织?: WorldArchivedFaction[];
+  已平息形势?: WorldArchivedTrend[];
   /** 每次维护的完整诊断；不把被额度拒绝误报为剧情了结。 */
   维护备注?: string[];
 }

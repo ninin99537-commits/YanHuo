@@ -11,7 +11,7 @@
 // 平台访问全部走 useHost()(约定见 host.ts 顶部), 所以能脱离界面在 node 里单独测一遍。
 import { klona } from 'klona';
 import { useHost } from './host';
-import type { EventEvolution, WorldData, WorldEvent, WorldFaction, WorldMetric, WorldOccasion, WorldRegion, WorldSeed, WorldTrend } from './schema';
+import type { EventEvolution, WorldArchivedFaction, WorldArchivedTrend, WorldData, WorldEvent, WorldFaction, WorldMetric, WorldOccasion, WorldRegion, WorldSeed, WorldTrend } from './schema';
 import { 判定结果表, 是传讯速度, 迁移旧键名, type 传讯速度 } from './schema';
 import { getSettings } from './settings';
 import { toastError } from './toast';
@@ -300,6 +300,32 @@ function 重建暗线(列表: unknown[]): WorldSeed[] {
     });
 }
 
+/** 重建一组已解体组织。字段走 世界字段表.组织层, 另保留 名称 / 解体时间 / 结束原因。 */
+function 重建已解体组织(列表: unknown[]): WorldArchivedFaction[] {
+  return 列表
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && typeof (item as Record<string, unknown>).名称 === 'string' && String((item as Record<string, unknown>).名称).trim().length > 0)
+    .map(raw => {
+      const faction = 规范化条目<WorldFaction>(取层('组织'), raw);
+      const item: WorldArchivedFaction = { 名称: String(raw.名称).trim(), ...faction };
+      if (typeof raw.解体时间 === 'string' && raw.解体时间) item.解体时间 = raw.解体时间;
+      if (typeof raw.结束原因 === 'string' && raw.结束原因) item.结束原因 = raw.结束原因;
+      return item;
+    });
+}
+
+/** 重建一组已平息形势。字段走 世界字段表.形势层, 另保留 名称 / 平息时间 / 结束原因。 */
+function 重建已平息形势(列表: unknown[]): WorldArchivedTrend[] {
+  return 列表
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && typeof (item as Record<string, unknown>).名称 === 'string' && String((item as Record<string, unknown>).名称).trim().length > 0)
+    .map(raw => {
+      const trend = 规范化条目<WorldTrend>(取层('形势'), raw);
+      const item: WorldArchivedTrend = { 名称: String(raw.名称).trim(), ...trend };
+      if (typeof raw.平息时间 === 'string' && raw.平息时间) item.平息时间 = raw.平息时间;
+      if (typeof raw.结束原因 === 'string' && raw.结束原因) item.结束原因 = raw.结束原因;
+      return item;
+    });
+}
+
 /** 把一份楼层快照(可能是旧格式)按当前结构重建: 旧字段名迁移、废弃字段丢弃、缺字段补缺省; 归档引用按池解开 */
 export function sanitizeSnapshot(原快照: Record<string, any>, 池: 归档池 = {}): WorldData {
   // v2.10.1: 旧层名/旧字段名先搬到新名下(条目里的字段另有 字段表 的 旧名 兜底, 归档池里解出来的条目也走那条)
@@ -309,6 +335,8 @@ export function sanitizeSnapshot(原快照: Record<string, any>, 池: 归档池 
   const 墓碑源 = 取归档(snapshot, '已结束', '已结束引用', 池, 缺失);
   const 失效暗线源 = 取归档(snapshot, '已失效暗线', '已失效暗线引用', 池, 缺失);
   const 过期日程源 = 取归档(snapshot, '已过期日程', '已过期日程引用', 池, 缺失);
+  const 解体组织源 = 取归档(snapshot, '已解体组织', '已解体组织引用', 池, 缺失);
+  const 平息形势源 = 取归档(snapshot, '已平息形势', '已平息形势引用', 池, 缺失);
   if (缺失.length) console.warn(`[烟火] 快照引用的 ${缺失.length} 条归档在归档池里找不到, 已略过: ${缺失.slice(0, 5).join(', ')}${缺失.length > 5 ? ' …' : ''}`);
   if (snapshot.世界 && typeof snapshot.世界 === 'object') {
     data.世界 = {
@@ -361,6 +389,8 @@ export function sanitizeSnapshot(原快照: Record<string, any>, 池: 归档池 
       .filter((item: unknown) => !!item && typeof item === 'object')
       .map((occasion: object) => 规范化条目<WorldOccasion>(取层('日程'), occasion as Record<string, unknown>));
   }
+  if (解体组织源?.length) data.已解体组织 = 重建已解体组织(解体组织源);
+  if (平息形势源?.length) data.已平息形势 = 重建已平息形势(平息形势源);
   if (Array.isArray(snapshot.日程)) {
     data.日程 = snapshot.日程
       .filter((item: unknown) => !!item && typeof item === 'object')
@@ -522,7 +552,9 @@ function buildSnapshotPayload(data: WorldData, anchorFloor: number, processedFlo
   const 墓碑 = 入池('e', data.已结束 ?? [], 池);
   const 失效暗线 = 入池('s', data.已失效暗线 ?? [], 池);
   const 过期日程 = 入池('o', data.已过期日程 ?? [], 池);
-  const 新增 = { ...墓碑.新增, ...失效暗线.新增, ...过期日程.新增 };
+  const 解体组织 = 入池('f', data.已解体组织 ?? [], 池);
+  const 平息形势 = 入池('t', data.已平息形势 ?? [], 池);
+  const 新增 = { ...墓碑.新增, ...失效暗线.新增, ...过期日程.新增, ...解体组织.新增, ...平息形势.新增 };
   const payload = {
     版本: DATA_VERSION,
     楼层: anchorFloor,
@@ -549,6 +581,8 @@ function buildSnapshotPayload(data: WorldData, anchorFloor: number, processedFlo
     // 2026-11-22 修: 两个归档随快照落盘(完整保留, 不裁条数也不裁字段); v2.9.6 起只记引用, 空就不写这个键
     ...(失效暗线.引用.length ? { 已失效暗线引用: 失效暗线.引用 } : {}),
     ...(过期日程.引用.length ? { 已过期日程引用: 过期日程.引用 } : {}),
+    ...(解体组织.引用.length ? { 已解体组织引用: 解体组织.引用 } : {}),
+    ...(平息形势.引用.length ? { 已平息形势引用: 平息形势.引用 } : {}),
   };
   return { payload, 新增 };
 }

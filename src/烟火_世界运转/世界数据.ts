@@ -1,4 +1,4 @@
-import type { Settings, WorldData, WorldEvent, WorldFaction, WorldMetric, WorldOccasion, WorldSeed } from './schema';
+import type { Settings, WorldArchivedFaction, WorldArchivedTrend, WorldData, WorldEvent, WorldFaction, WorldMetric, WorldOccasion, WorldSeed, WorldTrend } from './schema';
 import { SEED_MATURITY, 迁移枚举值, 迁移旧键名 } from './schema';
 import { EVENT_LIMIT, 内容字段键, 取层, 占位词, 沿用条目, 规范化事件字段, 规范化条目, 事件层 } from './世界字段表';
 import { 保底世界时间, 解析日期, type 世界时间约束 } from './时间校验';
@@ -160,12 +160,15 @@ export function 定主角所在(给值: unknown, 旧值: string | undefined, 地
  *  古代历法保持原文不伪造日期；算出来的新日期若仍早于当前世界时间，继续往前推。 */
 function 下一次日程日期(时间: string, 周期: string, 世界日: number): string | null {
   const 周期文本 = String(周期 ?? '').trim();
-  const 步长 = /每年|一年/.test(周期文本) ? { 年: 1 }
-    : /每季|一季|季度/.test(周期文本) ? { 月: 3 }
-      : /每月|一月|月度/.test(周期文本) ? { 月: 1 }
-        : /每周|一周|星期/.test(周期文本) ? { 日: 7 }
-          : /每天|每日/.test(周期文本) ? { 日: 1 }
-            : null;
+  const 步长 = /每两年|两年/.test(周期文本) ? { 年: 2 }
+    : /每年|一年/.test(周期文本) ? { 年: 1 }
+      : /每半年|半年/.test(周期文本) ? { 月: 6 }
+        : /每季|一季|季度/.test(周期文本) ? { 月: 3 }
+          : /每月|一月|月度/.test(周期文本) ? { 月: 1 }
+            : /每两周|两周|双周|半月/.test(周期文本) ? { 日: 14 }
+              : /每周|一周|星期/.test(周期文本) ? { 日: 7 }
+                : /每天|每日/.test(周期文本) ? { 日: 1 }
+                  : null;
   if (!步长) return null;
   let 日期 = 解析日期(时间);
   if (!日期) return null;
@@ -285,24 +288,87 @@ export function validateAndNormalize(原载荷: any, oldData: WorldData, 时间�
   }
   if (active.length > cap) notes.push(`旧档保留${active.length}条事态，超过${cap}条准入参考；停止额外新增，不强行判结束`);
 
+  const archivedFactions: WorldArchivedFaction[] = [...(oldData.已解体组织 ?? [])];
+  const archivedFactionNames = new Set(archivedFactions.map(f => f.名称));
   const factions: Record<string, WorldFaction> = { ...(oldData.组织 ?? {}) };
   const factionLayer = 取层('组织');
-  for (const [name, raw] of Object.entries(parsed.组织 ?? {})) {
+  const 解体状态 = /^(已解体|已消亡|已解散|已覆灭|已破产|已兼并|已并入|已瓦解|已取缔|已退场|解体|消亡|解散|覆灭|破产)$/;
+  for (const [rawName, raw] of Object.entries(parsed.组织 ?? {})) {
+    const name = 文本(rawName);
     if (!name || !对象(raw)) continue;
+    const 状态值 = 文本((raw as Record<string, unknown>).状态);
+    const 结束原因 = 文本((raw as Record<string, unknown>).结束原因 ?? (raw as Record<string, unknown>).解体原因 ?? (raw as Record<string, unknown>).消亡原因);
+    if (解体状态.test(状态值)) {
+      const old = factions[name];
+      if (!old) { notes.push(`组织「${name}」不在活跃清单里，无法直接判解体`); continue; }
+      if (!结束原因) { notes.push(`组织「${name}」解体缺少完整结束原因，原组织保留`); continue; }
+      const merged = 沿用条目(factionLayer, raw, old as unknown as Record<string, unknown>) as unknown as WorldFaction;
+      delete factions[name];
+      if (!archivedFactionNames.has(name)) {
+        archivedFactions.push({ 名称: name, ...merged, 解体时间: time, 结束原因 });
+        archivedFactionNames.add(name);
+      }
+      continue;
+    }
+    if (!(name in factions) && archivedFactionNames.has(name)) { notes.push(`组织「${name}」已经解体，未因旧回忆复活`); continue; }
     if (!(name in factions) && Object.keys(factions).length >= factionLayer.容量) { notes.push(`组织「${name}」暂无新名额，旧实体不被挤掉`); continue; }
     factions[name] = 沿用条目(factionLayer, raw, (oldData.组织?.[name] as unknown as Record<string, unknown>)) as unknown as WorldFaction;
   }
   const regions = normalizeLayer(parsed.地区, oldData.地区 ?? {}, 取层('地区').容量, 内容字段键(取层('地区')));
-  for (const [name, oldReg] of Object.entries(oldData.地区 ?? {})) {
-    const 邻近 = String((parsed.地区?.[name] as any)?.邻近地区 ?? oldReg?.邻近地区 ?? '').trim();
-    if (邻近 && regions[name]) regions[name].邻近地区 = 邻近;
+  for (const name of Object.keys(regions)) {
+    const 邻近 = String((parsed.地区?.[name] as any)?.邻近地区 ?? oldData.地区?.[name]?.邻近地区 ?? '').trim();
+    if (邻近) regions[name].邻近地区 = 邻近;
   }
-  const trends = options.运转?.世界形势 === false
-    ? (oldData.形势 ?? {})
-    : normalizeLayer(parsed.形势, oldData.形势 ?? {}, 取层('形势').容量, 内容字段键(取层('形势')));
+  const archivedTrends: WorldArchivedTrend[] = [...(oldData.已平息形势 ?? [])];
+  const archivedTrendNames = new Set(archivedTrends.map(t => t.名称));
+  const trendLayer = 取层('形势');
+  const trends: Record<string, WorldTrend> = { ...(oldData.形势 ?? {}) };
+  if (options.运转?.世界形势 !== false && 对象(parsed.形势)) {
+    const 平息状态 = /^(已平息|已结束|已终结|已消退|已停止|已完结|已退场|平息|结束|终结)$/;
+    const trendFields = 内容字段键(trendLayer);
+    for (const [rawName, raw] of Object.entries(parsed.形势)) {
+      const name = 文本(rawName);
+      if (!name || !对象(raw)) continue;
+      const 状态值 = 文本((raw as Record<string, unknown>).状态);
+      const 结束原因 = 文本((raw as Record<string, unknown>).结束原因 ?? (raw as Record<string, unknown>).平息原因);
+      if (平息状态.test(状态值)) {
+        const old = trends[name];
+        if (!old) { notes.push(`形势「${name}」不在活跃清单里，无法直接判平息`); continue; }
+        if (!结束原因) { notes.push(`形势「${name}」平息缺少完整结束原因，原形势保留`); continue; }
+        const merged = Object.fromEntries(trendFields.map(field => [field, 合并文本((raw as Record<string, unknown>)[field], (old as any)?.[field], field)])) as unknown as WorldTrend;
+        delete trends[name];
+        if (!archivedTrendNames.has(name)) {
+          archivedTrends.push({ 名称: name, ...merged, 平息时间: time, 结束原因 });
+          archivedTrendNames.add(name);
+        }
+        continue;
+      }
+      if (!(name in trends) && archivedTrendNames.has(name)) { notes.push(`形势「${name}」已经平息，未因旧回忆重开`); continue; }
+      if (!(name in trends) && Object.keys(trends).length >= trendLayer.容量) { notes.push(`形势「${name}」暂无新名额，旧形势不被挤掉`); continue; }
+      trends[name] = Object.fromEntries(trendFields.map(field => [field, 合并文本((raw as Record<string, unknown>)[field], (oldData.形势?.[name] as any)?.[field], field)])) as unknown as WorldTrend;
+    }
+  }
   const metricLayer = 取层('指标');
   const metrics: Record<string, WorldMetric> = {};
-  const metricRaw = options.运转?.世界指标 === false ? oldData.指标 ?? {} : normalizeLayer(parsed.指标, oldData.指标 ?? {}, metricLayer.容量, 内容字段键(metricLayer));
+  const 停用指标 = new Set<string>();
+  const 停用状态 = /^(已停用|已移除|已作废|已结束|停用|移除|作废)$/;
+  const metricParsedClean: Record<string, any> = {};
+  if (options.运转?.世界指标 !== false && 对象(parsed.指标)) {
+    for (const [rawName, raw] of Object.entries(parsed.指标)) {
+      const name = 文本(rawName);
+      if (!name || !对象(raw)) continue;
+      if (停用状态.test(文本((raw as Record<string, unknown>).状态))) {
+        if (name in (oldData.指标 ?? {})) {
+          停用指标.add(name);
+          notes.push(`指标「${name}」已停用并移出活跃清单`);
+        }
+        continue;
+      }
+      metricParsedClean[name] = raw;
+    }
+  }
+  const metricOldFiltered = Object.fromEntries(Object.entries(oldData.指标 ?? {}).filter(([name]) => !停用指标.has(name)));
+  const metricRaw = options.运转?.世界指标 === false ? oldData.指标 ?? {} : normalizeLayer(metricParsedClean, metricOldFiltered, metricLayer.容量, 内容字段键(metricLayer));
   for (const [name, entry] of Object.entries(metricRaw)) {
     const value = 规范化条目<WorldMetric>(metricLayer, entry);
     if (oldData.指标?.[name]?.值 === value.值) value.趋势 = oldData.指标[name].趋势;
@@ -354,10 +420,11 @@ export function validateAndNormalize(原载荷: any, oldData: WorldData, 时间�
       else if (occasions.length < 取层('日程').容量) occasions.push(item);
       else notes.push(`日程「${name}」暂无新名额，尚未来临的旧节点保持`);
     }
+    const 一次性周期 = /^(?:一次性|单次|一次|仅一次|仅此一次|非周期|不重复|无)?$/;
     occasions = occasions.filter(item => {
       const date = 解析日期(item.时间);
       if (!newDate || !date || date.天 >= newDate.天) return true;
-      if (item.周期 === '一次性') {
+      if (一次性周期.test(String(item.周期 ?? '').trim())) {
         if (!expired.some(e => e.名称 === item.名称 && e.时间 === item.时间)) expired.push(item);
         return false;
       }
@@ -382,7 +449,10 @@ export function validateAndNormalize(原载荷: any, oldData: WorldData, 时间�
     地区: regions, 形势: trends, 暗线: seeds, 日程: occasions, 指标: metrics,
     事件: active, 已结束: ended, 组织: factions,
     小结: 文本(parsed.小结 ?? parsed.小小结),
-    已失效暗线: invalidSeeds, 已过期日程: expired, 维护备注: notes,
+    已失效暗线: invalidSeeds, 已过期日程: expired,
+    ...(archivedFactions.length ? { 已解体组织: archivedFactions } : {}),
+    ...(archivedTrends.length ? { 已平息形势: archivedTrends } : {}),
+    维护备注: notes,
   };
 }
 

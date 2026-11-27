@@ -1213,6 +1213,20 @@ function toggleTrail(key: string) {
                     >
                   </label>
                 </div>
+                <label class="yh-field">
+                  <span class="yh-field-label">自动推进最短字数</span>
+                  <input
+                    v-model.number="settings.运转.自动推进最短字数"
+                    type="number"
+                    min="0"
+                    max="5000"
+                    step="50"
+                    class="yh-input"
+                  />
+                  <span class="yh-field-hint"
+                    >过滤标签后的最新回复低于该字数时跳过自动推进（防截断空跑，0 = 不限制；短回复卡可调低）</span
+                  >
+                </label>
               </div>
               <div class="yh-set-col">
                 <h3 class="yh-col-title">注入主AI</h3>
@@ -1680,6 +1694,28 @@ function toggleTrail(key: string) {
               <PhGraph :size="22" weight="light" />
               <p>尚无组织档案<br />世界推进后自动识别</p>
             </div>
+            <details v-if="(world.已解体组织?.length ?? 0) > 0" class="yh-world-sec">
+              <summary>
+                <PhCaretDown class="yh-world-caret" :size="12" weight="bold" />
+                <span>已解体组织</span>
+                <em>{{ world.已解体组织!.length }}</em>
+              </summary>
+              <ul class="yh-world-list">
+                <li v-for="item in world.已解体组织" :key="item.名称" class="yh-world-card">
+                  <div class="yh-world-card-head">
+                    <strong>{{ item.名称 }}</strong>
+                    <span v-if="item.解体时间" class="yh-badge yh-badge-plain">{{ item.解体时间 }}</span>
+                  </div>
+                  <p v-if="item.结束原因" class="yh-world-main">{{ item.结束原因 }}</p>
+                  <dl v-if="item.背景" class="yh-world-fields">
+                    <div>
+                      <dt>背景</dt>
+                      <dd>{{ item.背景 }}</dd>
+                    </div>
+                  </dl>
+                </li>
+              </ul>
+            </details>
           </section>
 
 <!-- ============ 世界 ============ -->
@@ -1734,6 +1770,28 @@ function toggleTrail(key: string) {
                   </li>
                 </ul>
                 <p v-else class="yh-mini-empty">暂无形势</p>
+                <details v-if="(world.已平息形势?.length ?? 0) > 0" class="yh-world-sec">
+                  <summary>
+                    <PhCaretDown class="yh-world-caret" :size="12" weight="bold" />
+                    <span>已平息形势</span>
+                    <em>{{ world.已平息形势!.length }}</em>
+                  </summary>
+                  <ul class="yh-world-list">
+                    <li v-for="item in world.已平息形势" :key="item.名称" class="yh-world-card">
+                      <div class="yh-world-card-head">
+                        <strong>{{ item.名称 }}</strong>
+                        <span v-if="item.平息时间" class="yh-badge yh-badge-plain">{{ item.平息时间 }}</span>
+                      </div>
+                      <p v-if="item.结束原因" class="yh-world-main">{{ item.结束原因 }}</p>
+                      <dl v-if="item.背景" class="yh-world-fields">
+                        <div>
+                          <dt>背景</dt>
+                          <dd>{{ item.背景 }}</dd>
+                        </div>
+                      </dl>
+                    </li>
+                  </ul>
+                </details>
               </details>
 
               <details class="yh-world-sec" open>

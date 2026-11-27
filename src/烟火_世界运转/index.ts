@@ -79,8 +79,9 @@ async function handleMessageReceived(message_id: number) {
     if (!latest || latest.role !== 'assistant' || latest.is_hidden) return;
     const filter = createTextFilter(settings.标签);
     const replyText = filter(String(latest.message || '')).replace(/[\r\n\t]+/g, '').trim();
-    if (replyText.length < 500) {
-      console.warn(`[烟火] 最新正文回复过短(过滤后 ${replyText.length}字), 疑似被截断, 已跳过本次自动推进`);
+    const minLength = Math.max(0, settings.运转.自动推进最短字数 ?? 200);
+    if (minLength > 0 && replyText.length < minLength) {
+      console.warn(`[烟火] 最新正文回复过短(过滤后 ${replyText.length}字 < 阈值 ${minLength}字), 疑似被截断, 已跳过本次自动推进`);
       return;
     }
     const frequency = Math.max(1, settings.运转.更新频率);

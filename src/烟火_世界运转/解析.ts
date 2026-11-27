@@ -143,6 +143,7 @@ function looksLikeWorldPayload(value: any): boolean {
 
 /** AI 偶尔把模板的中文键名翻成英文——按区块把常见英文键名归一成中文, 避免整轮输出被判"格式不符"丢弃 */
 const TOP_KEY_ALIASES: Record<string, string> = {
+  protocol: '协议',
   world: '世界',
   world_info: '世界',
   region: '地区',
@@ -187,6 +188,9 @@ const SECTION_FIELD_ALIASES: Record<string, Record<string, string>> = {
     foreign_relations: '外部关系',
     foreign: '外部关系',
     relations: '外部关系',
+    adjacent: '邻近地区',
+    neighbors: '邻近地区',
+    adjacent_regions: '邻近地区',
     background: '背景',
     history: '背景',
   },
@@ -198,6 +202,10 @@ const SECTION_FIELD_ALIASES: Record<string, Record<string, string>> = {
     trend: '走向',
     background: '背景',
     history: '背景',
+    status: '状态',
+    state: '状态',
+    end_reason: '结束原因',
+    reason: '结束原因',
   },
   暗线: {
     title: '标题',
@@ -210,6 +218,8 @@ const SECTION_FIELD_ALIASES: Record<string, Record<string, string>> = {
     maturity: '成熟度',
     background: '背景',
     history: '背景',
+    end_reason: '结束原因',
+    reason: '结束原因',
   },
   日程: {
     name: '名称',
@@ -221,8 +231,10 @@ const SECTION_FIELD_ALIASES: Record<string, Record<string, string>> = {
     date: '时间',
     overview: '概况',
     description: '概况',
+    scope: '范围',
+    region: '范围',
   },
-  指标: { value: '值', amount: '值', level: '值', trend: '趋势', direction: '趋势', note: '说明', description: '说明' },
+  指标: { value: '值', amount: '值', level: '值', trend: '趋势', direction: '趋势', note: '说明', description: '说明', scope: '范围', region: '范围', status: '状态' },
   事件: {
     title: '标题',
     name: '标题',
@@ -245,6 +257,10 @@ const SECTION_FIELD_ALIASES: Record<string, Record<string, string>> = {
     secret: '公开性',
     representative: '代表人物',
     figure: '代表人物',
+    end_reason: '结束原因',
+    wait_condition: '等待条件',
+    next_check_time: '下次判定时间',
+    next_judge_time: '下次判定时间',
   },
   组织: {
     goal: '目标',
@@ -261,6 +277,11 @@ const SECTION_FIELD_ALIASES: Record<string, Record<string, string>> = {
     head: '负责人',
     leader: '负责人',
     figure: '负责人',
+    status: '状态',
+    state: '状态',
+    end_reason: '结束原因',
+    dissolution_reason: '结束原因',
+    reason: '结束原因',
   },
 };
 

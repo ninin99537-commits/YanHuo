@@ -165,7 +165,9 @@ function 所在地段(data: WorldData, 主角所在: string): string | null {
   const 层 = 取层('地区');
   const 地区 = data.地区?.[主角所在];
   if (!地区 || !该注入(层, 地区 as unknown as Record<string, unknown>)) return null;
-  return `【所在地】\n${主角所在}\n${字段行(层.注入列, 地区 as unknown as Record<string, unknown>)}`;
+  const 主体 = 字段行(层.注入列, 地区 as unknown as Record<string, unknown>);
+  const 邻近 = String(地区.邻近地区 ?? '').trim();
+  return `【所在地】\n${主角所在}\n${主体}${邻近 ? `\n邻近地区：${邻近}` : ''}`;
 }
 
 /** 范围(v2.9.5): 空 = 全境, 总是给; 有值时只给与主角所在对得上的; 主角所在未知时不过滤(降级, 不丢信息) */
@@ -297,18 +299,22 @@ export function 构建公开摘要(data: WorldData, settings: Settings, 选项: 
     return 键.length > 0 && 键 !== 主角所在;
   });
   if (地区列表.length > 0) {
-    // 蓝灯只放「非所在地地区名：一句话概况」作地图索引，详情留给绿灯按需触发
+    // 蓝灯只放「非所在地地区名（主事方）：一句话概况」作地图索引，详情留给绿灯按需触发
     lines.push('【已知地区】\n' + 地区列表.map(([名, 地区]) => {
+      const 主事 = String(地区?.主事方 ?? '').trim();
       const 概况 = String(地区?.概况 ?? '').trim();
-      return 概况 ? `- ${名}：${概况}` : `- ${名}`;
+      const 标 = 主事 ? `（${主事}）` : '';
+      return 概况 ? `- ${名}${标}：${概况}` : `- ${名}${标}`;
     }).join('\n'));
   }
   const 组织列表 = Object.entries(data.组织 ?? {}).filter(([名]) => 名.trim().length > 0);
   if (组织列表.length > 0) {
-    // 蓝灯只放「组织名：公开目标」作为目录索引，让主 AI 知道有哪些组织可提及以触发绿灯；动向/外部关系/背景绝不进蓝灯
+    // 蓝灯只放「组织名（负责人｜覆盖范围）：公开目标」作为目录索引，让主 AI 知道有哪些组织与头领可提及以触发绿灯；动向/外部关系/背景绝不进蓝灯
     lines.push('【已知组织】\n' + 组织列表.map(([名, 组织]) => {
+      const 补充 = [String(组织?.负责人 ?? '').trim(), String(组织?.覆盖范围 ?? '').trim()].filter(Boolean).join('｜');
+      const 标 = 补充 ? `（${补充}）` : '';
       const 目标 = String(组织?.目标 ?? '').trim();
-      return 目标 ? `- ${名}：${目标}` : `- ${名}`;
+      return 目标 ? `- ${名}${标}：${目标}` : `- ${名}${标}`;
     }).join('\n'));
   }
   if (selected.length || 最近了结.length) lines.push('【动态】');
@@ -447,11 +453,12 @@ export function 构建绿灯条目(
       标题,
       ...提取负责人关键词(event.代表人物 ?? ''),
     ].filter(w => w.length >= 2 && !关键词占位词.has(w))));
+    const 时间标注 = String(event.时间 ?? '').trim();
     条目们.push({
       角色: '往事',
       键,
       关键词: 关键词.length ? 关键词 : [标题],
-      内容: `[烟火 · 往事结局]\n已结束事态「${标题}」的公开结果：\n${event.结束原因}`,
+      内容: `[烟火 · 往事结局]\n已结束事态「${标题}」的公开结果${时间标注 ? `（${时间标注}）` : ''}：\n${event.结束原因}`,
     });
   }
 

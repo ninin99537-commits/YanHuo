@@ -43,6 +43,11 @@ export interface 面板机制配置 {
   /** 面板默认尺寸(窄屏另有规则, 不受这两个数影响) */
   面板宽: number;
   面板高: number;
+  /** 可选大面板尺寸(仅桌面端非窄屏生效; 不传则无大面板切换) */
+  大面板宽?: number;
+  大面板高?: number;
+  /** 桌面端未存过偏好时是否默认启用大面板(默认 false) */
+  默认大面板?: boolean;
   /** 贴球弹窗要跟着主题走: 由调用方接自己的 toast 模块 */
   提示条: {
     取配色(主题: 主题模式): 弹窗配色;
@@ -65,12 +70,15 @@ export interface 面板机制配置 {
 export function 使用面板机制(配置: 面板机制配置) {
   const CLOSED_SIZE = 配置.球直径;
   const 偏好 = 建偏好会话(配置.存储);
+  const 支持大面板 = Boolean(配置.大面板宽 && 配置.大面板高);
 
   // ---------------------------------------------------------------------------
   // 主题 + 提示条配色
   // ---------------------------------------------------------------------------
 
-  const theme = ref<主题模式>(偏好.读()?.主题 ?? 'dark');
+  const savedInit = 偏好.读();
+  const theme = ref<主题模式>(savedInit?.主题 ?? 'dark');
+  const 启用大面板 = ref<boolean>(支持大面板 ? (savedInit?.大面板 ?? 配置.默认大面板 ?? false) : false);
 
   /** 把面板主题色同步给贴球弹窗/弹条(配色由调用方的 主题.ts 给, 这里不手抄任何色值) */
   function applyToastTheme() {
@@ -147,6 +155,7 @@ export function 使用面板机制(配置: 面板机制配置) {
   function syncPanelShadow(fade = false) {
     const shadow = panelShadowEl.value;
     if (!shadow) return;
+    shadow.getAnimations?.().forEach(a => a.cancel());
     if (!panelOpen.value) {
       shadow.style.display = 'none';
       return;
@@ -164,6 +173,14 @@ export function 使用面板机制(配置: 面板机制配置) {
       shadow.style.boxShadow = style.getPropertyValue(配置.阴影变量).trim() || 'none';
     }
     if (fade) shadow.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: 'cubic-bezier(0.2, 0.9, 0.25, 1)' });
+  }
+
+  /** 面板收起动画期间同步淡出外阴影层 */
+  function 淡出阴影(duration = 160) {
+    const shadow = panelShadowEl.value;
+    if (shadow && shadow.style.display !== 'none') {
+      shadow.animate([{ opacity: 1 }, { opacity: 0 }], { duration, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'forwards' });
+    }
   }
 
   const viewportW = (): number => parentWin.value?.innerWidth ?? window.innerWidth;
@@ -246,6 +263,8 @@ export function 使用面板机制(配置: 面板机制配置) {
   const panelH = ref(配置.面板高);
   /** 是否窄屏(手机/窄窗口): 触发"面板近乎全屏 + 底部标签栏"的手机布局 */
   const isNarrow = ref(false);
+  /** 当前是否处于大面板态(仅桌面端非窄屏 + 已启用大面板 + 配置了大面板尺寸) */
+  const isWide = computed(() => 支持大面板 && !isNarrow.value && 启用大面板.value);
   function computePanelSize() {
     isNarrow.value = viewportW() < 700;
     if (isNarrow.value) {
@@ -253,6 +272,9 @@ export function 使用面板机制(配置: 面板机制配置) {
       // 全屏才能容纳内容; 边距从 24px 收到 8px
       panelW.value = Math.max(240, viewportW() - 8);
       panelH.value = Math.max(300, Math.round(viewportH() * 0.94));
+    } else if (isWide.value) {
+      panelW.value = Math.min(配置.大面板宽!, viewportW() - 32);
+      panelH.value = Math.min(配置.大面板高!, viewportH() - 32);
     } else {
       panelW.value = Math.min(配置.面板宽, viewportW() - 24);
       panelH.value = Math.min(配置.面板高, viewportH() - 24);
@@ -394,10 +416,97 @@ export function 使用面板机制(配置: 面板机制配置) {
       要存.面板x = panelPos.value.x;
       要存.面板y = panelPos.value.y;
     }
+    if (支持大面板) 要存.大面板 = 启用大面板.value;
     偏好.写(要存);
   }
 
-  watch([panelOpen, anchorX, anchorY, panelPos], applyFrame);
+  let 尺寸动画定时器: number | null = null;
+
+  function 切换大面板() {
+    if (!支持大面板 || isNarrow.value) return;
+    const 减少动效 = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const 开着 = panelOpen.value;
+    const 旧 = 开着 ? { x: panelRectView.value.x, y: panelRectView.value.y, w: panelW.value, h: panelH.value } : null;
+
+    启用大面板.value = !启用大面板.value;
+    // 切换尺寸后重置位置为居中, 避免小面板靠边时大面板挤偏
+    panelPos.value = null;
+
+    if (!开着 || !旧 || 减少动效) return;
+    // 先算好新矩形, 让 iframe 在动画期间罩住"旧矩形 ∪ 新矩形 ∪ 球", 防止大→小时 clip-path 瞬间裁掉正在缩小的边
+    computePanelSize();
+    const 新 = { x: panelRectView.value.x, y: panelRectView.value.y, w: panelW.value, h: panelH.value };
+    const target = frame.value;
+    if (target) {
+      const 球 = 有效球心();
+      const orbL = clamp(球.x - CLOSED_SIZE / 2, 0, Math.max(0, viewportW() - CLOSED_SIZE));
+      const orbT = clamp(球.y - CLOSED_SIZE / 2, 0, Math.max(0, viewportH() - CLOSED_SIZE));
+      const unionL = Math.min(旧.x, 新.x);
+      const unionT = Math.min(旧.y, 新.y);
+      const unionR = Math.max(旧.x + 旧.w, 新.x + 新.w);
+      const unionB = Math.max(旧.y + 旧.h, 新.y + 新.h);
+      const left = Math.max(0, Math.min(orbL, unionL) - 4);
+      const top = Math.max(0, Math.min(orbT, unionT) - 4);
+      const right = Math.min(viewportW(), Math.max(orbL + CLOSED_SIZE, unionR) + 4);
+      const bottom = Math.min(viewportH(), Math.max(orbT + CLOSED_SIZE, unionB) + 4);
+      target.style.left = `${left}px`;
+      target.style.top = `${top}px`;
+      target.style.width = `${right - left}px`;
+      target.style.height = `${bottom - top}px`;
+      target.style.clipPath = 'none';
+      frameOrigin.value = { x: left, y: top };
+
+      const easing = 'cubic-bezier(0.22, 1, 0.36, 1)';
+      const duration = 220;
+      // 用纯 GPU transform FLIP(不逐帧改 width/height), 避免动画期间每帧触发几十张卡片的文字折行与整页 Reflow
+      const dx = 旧.x - 新.x;
+      const dy = 旧.y - 新.y;
+      const sx = 旧.w / Math.max(1, 新.w);
+      const sy = 旧.h / Math.max(1, 新.h);
+      const fromTransform = `translate3d(${dx}px, ${dy}px, 0) scale(${sx}, ${sy})`;
+      const panelNode = panelRef.value;
+      if (panelNode) {
+        panelNode.getAnimations?.().forEach(a => a.cancel());
+        panelNode.style.transformOrigin = '0 0';
+        panelNode.animate?.(
+          [{ transform: fromTransform }, { transform: 'translate3d(0, 0, 0) scale(1, 1)' }],
+          { duration, easing },
+        );
+      }
+      const shadow = panelShadowEl.value;
+      if (shadow && shadow.style.display !== 'none') {
+        shadow.getAnimations?.().forEach(a => a.cancel());
+        shadow.style.left = `${新.x}px`;
+        shadow.style.top = `${新.y}px`;
+        shadow.style.width = `${新.w}px`;
+        shadow.style.height = `${新.h}px`;
+        shadow.style.transformOrigin = '0 0';
+        shadow.animate?.(
+          [{ transform: fromTransform }, { transform: 'translate3d(0, 0, 0) scale(1, 1)' }],
+          { duration, easing },
+        );
+      }
+      if (尺寸动画定时器 !== null) window.clearTimeout(尺寸动画定时器);
+      尺寸动画定时器 = window.setTimeout(() => {
+        尺寸动画定时器 = null;
+        if (panelRef.value) panelRef.value.style.transformOrigin = '';
+        if (panelShadowEl.value) panelShadowEl.value.style.transformOrigin = '';
+        if (panelOpen.value) applyFrame();
+        // 动画播完再落盘偏好, 避免第 0 帧跨 iframe 写酒馆全局变量阻塞主线程导致卡顿
+        persistPrefs();
+      }, duration + 30);
+    }
+  }
+
+  watch([panelOpen, anchorX, anchorY, panelPos], () => {
+    if (尺寸动画定时器 === null) applyFrame();
+  });
+  watch(启用大面板, () => {
+    if (尺寸动画定时器 === null) {
+      persistPrefs();
+      if (panelOpen.value) applyFrame();
+    }
+  });
   // 面板开着时压住**本插件自己的**提示条(它会被面板盖住/挡住操作), 关掉再补发。
   watch(panelOpen, 开 => 配置.提示条.设抑制?.(开));
   // iframe 一动(拖动/展开)就立刻重量真实矩形 —— 否则弹条/气泡要等下一次轮询才知道球挪了
@@ -577,6 +686,7 @@ export function 使用面板机制(配置: 面板机制配置) {
       anchorY.value = saved.y as number;
     }
     if (saved && typeof saved.面板x === 'number' && typeof saved.面板y === 'number') panelPos.value = { x: saved.面板x, y: saved.面板y };
+    if (支持大面板 && typeof saved?.大面板 === 'boolean') 启用大面板.value = saved.大面板;
     兜底球心();
     if (存过坏值) {
       console.warn('[面板机制] 球位置不在视口内(历史毒值), 已纠正为右下角:', saved?.x, saved?.y);
@@ -619,6 +729,8 @@ export function 使用面板机制(配置: 面板机制配置) {
     挂了resize的窗口 = null;
     if (量球定时器 !== null) window.clearInterval(量球定时器);
     量球定时器 = null;
+    if (尺寸动画定时器 !== null) window.clearTimeout(尺寸动画定时器);
+    尺寸动画定时器 = null;
     量球观察器?.disconnect();
     量球观察器 = null;
     removePanelShadow();
@@ -646,6 +758,8 @@ export function 使用面板机制(配置: 面板机制配置) {
     }),
     /** 贴球锚点的响应式快照(被收纳时=坞图标, 否则=球) —— 弹条/气泡 watch 它跟随 */
     贴球锚点,
+    /** 立即重测球 iframe 真实矩形并刷新贴球锚点（供悬停气泡等瞬时场景调用） */
+    同步贴球锚点,
     /** 供下游(弹条/气泡)自己定位用的视口与夹取 */
     viewportW,
     viewportH,
@@ -656,5 +770,10 @@ export function 使用面板机制(配置: 面板机制配置) {
     /** 面板拖动 / 收起 */
     onPanelPointerDown,
     closePanel,
+    淡出阴影,
+    /** 窄屏(手机) / 大面板状态与切换 */
+    isNarrow,
+    isWide,
+    切换大面板,
   };
 }

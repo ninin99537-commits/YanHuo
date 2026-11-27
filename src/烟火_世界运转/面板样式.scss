@@ -1512,10 +1512,14 @@ $ease: cubic-bezier(0.22, 1, 0.36, 1);
     }
   }
 
-  // ---- 动效: 只有面板入场、推进中的转圈 / 火苗 / 进度线; 系统要求减少动效时全部不放 ----
+  // ---- 动效: 只有面板入场/退场、推进中的转圈 / 火苗 / 进度线; 系统要求减少动效时全部不放 ----
   @media (prefers-reduced-motion: no-preference) {
     .yh-panel {
       animation: yh-panel-in 0.22s $ease;
+      &.is-closing {
+        animation: yh-panel-out 0.16s $ease forwards;
+        pointer-events: none;
+      }
     }
     .yh-orb.is-updating::after {
       animation: yh-spin 1.05s linear infinite;
@@ -1530,11 +1534,21 @@ $ease: cubic-bezier(0.22, 1, 0.36, 1);
   @keyframes yh-panel-in {
     from {
       opacity: 0;
-      transform: scale(0.985);
+      transform: translateY(8px) scale(0.965);
     }
     to {
       opacity: 1;
       transform: none;
+    }
+  }
+  @keyframes yh-panel-out {
+    from {
+      opacity: 1;
+      transform: none;
+    }
+    to {
+      opacity: 0;
+      transform: translateY(6px) scale(0.97);
     }
   }
   @keyframes yh-spin {
@@ -1635,5 +1649,419 @@ $ease: cubic-bezier(0.22, 1, 0.36, 1);
     flex-direction: column;
     gap: 8px;
     margin-top: 8px;
+  }
+
+  // 紧凑模式零影响容器: 仅在 .yh-panel.is-wide 下激活通栏头版 + 齐头双栏
+  .yh-brief-main,
+  .yh-now-banner,
+  .yh-now-lead,
+  .yh-now-ctrl,
+  .yh-now-side,
+  .yh-chronicle-head,
+  .yh-fac-layout {
+    display: contents;
+  }
+
+  // =========================================================================
+  // 桌面端大面板 (.yh-panel.is-wide):
+  //   - 夜色灯火 / 宣纸晨光 暖炭质感 + 细下划线导航
+  //   - 简报: 上方通栏头版(左文右控) + 下方左动态(64%) / 右 sticky 信息栏(36%, 随滚贴顶不滚空)
+  //   - 组织(左名单右详情) / 档案(两列卡片网格) / 日志(双栏) / 设置(3 对 3 对称卡片双栏)
+  // =========================================================================
+  .yh-panel.is-wide {
+    .yh-header {
+      background:
+        radial-gradient(ellipse 58% 120% at 10% -15%, var(--yh-accent-soft), transparent 68%),
+        linear-gradient(180deg, var(--yh-panel-top) 0%, var(--yh-panel) 100%);
+    }
+    .yh-bar {
+      padding: 12px 16px 0 24px;
+      gap: 8px;
+    }
+    .yh-hero {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 8px 24px 0;
+    }
+    .yh-hero-time {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+    .yh-time-value {
+      font-size: $fs-display-sm;
+      line-height: $lh-tight;
+    }
+    .yh-time-sub {
+      margin-top: 0;
+      font-size: $fs-xs;
+    }
+    .yh-where {
+      margin: 0 0 2px;
+      flex: none;
+    }
+    .yh-progress {
+      margin-top: 10px;
+    }
+    // 细下划线导航: 去掉厚重药丸框, 留白更通透
+    .yh-jump {
+      padding: 0 24px;
+      gap: 20px;
+    }
+    .yh-jump-item {
+      position: relative;
+      padding: 9px 2px;
+      border-radius: 0;
+      font-size: $fs-sm;
+      background: transparent;
+      box-shadow: none;
+      &:hover {
+        background: transparent;
+        color: var(--yh-ink);
+      }
+      &.is-active {
+        background: transparent;
+        box-shadow: none;
+        color: var(--yh-ink);
+        font-weight: $fw-semibold;
+        &::after {
+          content: '';
+          position: absolute;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          height: 2px;
+          background: var(--yh-accent);
+        }
+      }
+    }
+    .yh-jump-back {
+      margin: 6px 0;
+    }
+    .yh-page {
+      padding: 16px 24px 28px;
+    }
+
+    // 简报大面板: 上通栏头版 + 下左动态(64%) / 右 sticky 信息栏(36%)
+    .yh-brief {
+      > .yh-brief-main,
+      > .yh-sec {
+        display: none;
+      }
+      > .yh-brief-main.is-active-pane {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        &.has-side {
+          display: grid;
+          grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr);
+          grid-template-rows: auto auto;
+          grid-template-areas:
+            'now now'
+            'feed side';
+          gap: 18px 20px;
+          align-items: start;
+          .yh-sec-now {
+            grid-area: now;
+          }
+          .yh-sec-chronicle {
+            grid-area: feed;
+            margin-top: 0;
+            padding-top: 0;
+            border-top: 0;
+          }
+          .yh-now-side {
+            grid-area: side;
+            // 随右侧动态滚动稳稳贴顶, 彻底消除"左边滚很长、右边滚空"的长短脚感
+            position: sticky;
+            top: 0;
+            align-self: start;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            min-width: 0;
+            .yh-sec {
+              padding: 13px 14px;
+              margin-top: 0;
+              @include surface;
+              > .yh-sec-title {
+                margin-bottom: 8px;
+                justify-content: flex-start;
+                gap: 6px;
+                &::before {
+                  content: '';
+                  width: 4px;
+                  height: 4px;
+                  border-radius: 1px;
+                  background: var(--yh-accent);
+                  flex: none;
+                }
+              }
+              .yh-kv,
+              .yh-rows {
+                padding: 0;
+                background: transparent;
+                border: 0;
+                border-radius: 0;
+              }
+              .yh-rows li {
+                padding: 6px 0;
+              }
+            }
+          }
+        }
+        // 动态栏头: 标题与筛选同行, 视觉利落
+        .yh-chronicle-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          min-height: 26px;
+          margin-bottom: 10px;
+          .yh-sec-title {
+            margin-bottom: 0;
+            justify-content: flex-start;
+            gap: 6px;
+            flex: none;
+            &::before {
+              content: '';
+              width: 4px;
+              height: 4px;
+              border-radius: 1px;
+              background: var(--yh-accent);
+              flex: none;
+            }
+          }
+          .yh-filter-row {
+            margin-bottom: 0;
+            gap: 4px 8px;
+            justify-content: flex-end;
+          }
+          .yh-chip {
+            padding: 1px 8px;
+            font-size: $fs-2xs;
+          }
+        }
+        // 无右侧副栏时: 动态自然铺成两列卡片
+        &:not(.has-side) {
+          .yh-sec-chronicle {
+            margin-top: 0;
+            padding-top: 0;
+            border-top: 0;
+          }
+          .yh-feed {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+            align-items: start;
+          }
+        }
+      }
+      > .yh-sec.is-active-pane {
+        display: block;
+        margin-top: 0;
+        padding-top: 0;
+        border-top: 0;
+      }
+      .yh-sec-now {
+        padding: 0;
+        margin-top: 0;
+        border-top: 0;
+      }
+      // 上方通栏头版: 左文右控, 紧凑精致
+      .yh-now-banner {
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+        gap: 14px 22px;
+        align-items: center;
+        padding: 14px 18px;
+        @include surface;
+        border-left: 3px solid var(--yh-accent);
+      }
+      .yh-now-lead {
+        display: block;
+        min-width: 0;
+      }
+      .yh-mood-quote {
+        padding: 0;
+        background: transparent;
+        border: 0;
+        border-radius: 0;
+      }
+      .yh-now-empty {
+        padding: 0;
+        background: transparent;
+        border: 0;
+      }
+      .yh-now-ctrl {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        min-width: 0;
+        padding-left: 20px;
+        border-left: 1px solid var(--yh-line);
+      }
+      .yh-now-actions {
+        margin-top: 0;
+        .yh-btn-primary {
+          flex: 0 0 auto;
+          padding: 0 16px;
+        }
+      }
+      .yh-chat-speed {
+        margin-top: 0;
+      }
+      .yh-now-meta {
+        margin-top: 0;
+      }
+    }
+
+    // 动态卡片: 背景暗底嵌块 + 重大事件朱砂印边与极淡暖底
+    .yh-feed {
+      gap: 10px;
+    }
+    .yh-feed-item {
+      padding: 14px 16px;
+      &.is-editing {
+        grid-column: 1 / -1;
+      }
+      &.scale-重大 {
+        background:
+          linear-gradient(90deg, var(--yh-seal-soft) 0%, transparent 44%),
+          var(--yh-raise);
+      }
+    }
+    .yh-feed-cause {
+      margin-top: 8px;
+      padding: 7px 10px;
+      border-radius: $r-sm;
+      background: var(--yh-bg);
+      border: 1px solid var(--yh-line);
+    }
+
+    // 组织: 左列表 + 右详情主从双栏
+    .yh-fac-layout {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+    .yh-fac-chips {
+      flex-direction: column;
+      flex-wrap: nowrap;
+      gap: 4px;
+      margin-bottom: 0;
+      padding: 6px;
+      @include surface;
+      .yh-chip {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 12px;
+        border-radius: $r-sm;
+        border-color: transparent;
+        text-align: left;
+        font-size: $fs-sm;
+        &:hover {
+          background: var(--yh-hover);
+          border-color: transparent;
+        }
+        &.is-active {
+          background: var(--yh-accent-soft);
+          border-color: var(--yh-accent-line);
+          color: var(--yh-accent);
+          font-weight: $fw-semibold;
+        }
+      }
+    }
+    .yh-detail {
+      padding: 18px 20px;
+    }
+
+    // 档案: 形势 / 地区 / 暗线 / 日程 卡片两列网格
+    .yh-world-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      align-items: start;
+    }
+    .yh-world-grid {
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 10px;
+    }
+    .yh-world-card {
+      padding: 13px 15px;
+    }
+
+    // 日志: 左右双栏
+    .yh-page-logs {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+      gap: 20px;
+      align-items: start;
+    }
+    .yh-log-right {
+      padding-top: 0;
+      padding-left: 20px;
+      border-top: 0;
+      border-left: 1px solid var(--yh-line);
+    }
+    .yh-pre {
+      max-height: 300px;
+      &.yh-pre-short {
+        max-height: 240px;
+      }
+    }
+    .yh-console {
+      max-height: 260px;
+    }
+
+    // 设置: 左右 3 对 3 对称卡片化双栏
+    .yh-page-settings {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 16px 20px;
+      align-items: start;
+    }
+    .yh-set-stack {
+      gap: 16px;
+      & + .yh-set-stack {
+        padding-top: 0;
+        border-top: 0;
+      }
+    }
+    .yh-set-col {
+      padding: 16px 18px;
+      @include surface;
+      & + .yh-set-col {
+        padding-top: 16px;
+        border-top: 1px solid var(--yh-line);
+      }
+    }
+    .yh-about {
+      grid-column: 1 / -1;
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .yh-panel.is-wide .yh-brief > .is-active-pane,
+    .yh-panel.is-wide .yh-page-logs,
+    .yh-panel.is-wide .yh-page-settings {
+      animation: yh-pane-fade 0.16s $ease;
+    }
+  }
+  @keyframes yh-pane-fade {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
 }

@@ -25,6 +25,7 @@ export interface 界面偏好 {
   主题: 偏好主题;
   面板x?: number | null;
   面板y?: number | null;
+  大面板?: boolean;
 }
 
 /**

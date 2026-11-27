@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import {
+  PhArrowsInSimple,
+  PhArrowsOutSimple,
   PhCaretDown,
   PhCaretLeft,
   PhCheck,
@@ -82,9 +84,12 @@ const 面板 = 使用面板机制({
   阴影变量: '--yh-shadow',
   球直径: 悬浮球直径,
   阴影层序: 层序.面板阴影,
-  // v2.9.7「简报」: 窄而高(以前 880×620 横排两栏), 一页从上读到下
+  // v2.9.7「简报」: 窄而高(以前 880×620 横排两栏), 一页从上读到下; 桌面端可切换大面板(1020×720)
   面板宽: 400,
   面板高: 660,
+  大面板宽: 1020,
+  大面板高: 720,
+  默认大面板: true,
   提示条: { 取配色: 取弹窗配色, 设配色: setToastColors, 设锚点: setToastAnchor, 设抑制: setToastSuppressed },
   存储: {
     读全局: () => useHost().vars.get({ type: 'global' })?.[UI_KEY],
@@ -106,10 +111,44 @@ const {
   orbStyle,
   panelStyleRef,
   onOrbPointerDown,
-  onOrbClick,
+  onOrbClick: 原始点球,
   onPanelPointerDown,
-  closePanel,
+  closePanel: 原始收起,
+  淡出阴影,
+  isNarrow,
+  isWide,
+  切换大面板,
 } = 面板;
+// 收起面板的平滑淡出态(系统开启减少动效时跳过延迟直接收起)
+const 收起中 = ref(false);
+let 收起定时器: ReturnType<typeof setTimeout> | null = null;
+function closePanel() {
+  if (!panelOpen.value || 收起中.value) return;
+  const 减少动效 = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  if (减少动效) {
+    原始收起();
+    return;
+  }
+  收起中.value = true;
+  淡出阴影(160);
+  收起定时器 = setTimeout(() => {
+    收起定时器 = null;
+    收起中.value = false;
+    原始收起();
+  }, 155);
+}
+function onOrbClick() {
+  if (panelOpen.value) {
+    closePanel();
+    return;
+  }
+  if (收起定时器) {
+    clearTimeout(收起定时器);
+    收起定时器 = null;
+    收起中.value = false;
+  }
+  原始点球();
+}
 // 供模板 ref="rootEl/panelRef/headerEl" 绑定，实际读写在 使用面板机制 内部完成
 void rootEl;
 void panelRef;
@@ -137,12 +176,24 @@ function 跳到(键: 分区键) {
   当前分区.value = 键;
   nextTick(() => {
     const 盒 = scrollEl.value;
-    const 段 = 盒?.querySelector<HTMLElement>(`[data-sec="${键}"]`);
-    if (盒 && 段) 盒.scrollTo({ top: Math.max(0, 段.offsetTop - 6), behavior: 'smooth' });
+    if (!盒) return;
+    if (isWide.value) {
+      if (键 === 'chronicle') {
+        const 段 = 盒.querySelector<HTMLElement>('[data-sec="chronicle"]');
+        if (段) {
+          盒.scrollTo({ top: Math.max(0, 段.offsetTop - 10), behavior: 'smooth' });
+          return;
+        }
+      }
+      盒.scrollTo({ top: 0 });
+      return;
+    }
+    const 段 = 盒.querySelector<HTMLElement>(`[data-sec="${键}"]`);
+    if (段) 盒.scrollTo({ top: Math.max(0, 段.offsetTop - 6), behavior: 'smooth' });
   });
 }
 function 同步当前分区() {
-  if (子页.value !== null) return;
+  if (子页.value !== null || isWide.value) return;
   const 盒 = scrollEl.value;
   if (!盒) return;
   const 锚 = 盒.scrollTop + 28;
@@ -189,12 +240,23 @@ const 所在地 = computed(() => {
 /** 近期日程 / 数据变化: 与注入共用同一份挑选规则(公开摘要.ts), 面板上看到的就是主 AI 拿到的那几条 */
 const 近期日程 = computed(() => 取近期日程(world.value, settings.value, 解析日期(world.value.世界.时间)?.天, 主角所在.value));
 const 数据变化 = computed(() => 取数据变化(world.value, settings.value, 主角所在.value));
-const 分区 = computed<{ 键: 分区键; 名: string; 数: number | null }[]>(() => [
-  { 键: 'now', 名: '概况', 数: null },
-  { 键: 'chronicle', 名: '动态', 数: world.value.事件.length + (world.value.已结束?.length ?? 0) },
-  { 键: 'factions', 名: '组织', 数: factionEntries.value.length },
-  { 键: 'world', 名: '档案', 数: null },
-]);
+const 分区 = computed<{ 键: 分区键; 名: string; 数: number | null }[]>(() => {
+  const 事件总数 = world.value.事件.length + (world.value.已结束?.length ?? 0);
+  if (isWide.value) {
+    return [
+      { 键: 'now', 名: '简报', 数: 事件总数 || null },
+      { 键: 'factions', 名: '组织', 数: factionEntries.value.length || null },
+      { 键: 'world', 名: '档案', 数: null },
+    ];
+  }
+  return [
+    { 键: 'now', 名: '概况', 数: null },
+    { 键: 'chronicle', 名: '动态', 数: 事件总数 },
+    { 键: 'factions', 名: '组织', 数: factionEntries.value.length },
+    { 键: 'world', 名: '档案', 数: null },
+  ];
+});
+const 简报激活 = computed(() => 当前分区.value === 'now' || 当前分区.value === 'chronicle');
 
 // ---- 世界页手动编辑: 五层共用一套「名称+字段」增删改 ----
 // 改数据一律走 世界数据变更.ts 那道门(它负责上限/同名/id 签发/落快照/同步世界书);
@@ -666,7 +728,7 @@ function toggleTrail(key: string) {
       v-if="panelOpen"
       ref="panelRef"
       class="yh-panel"
-      :class="{ 'is-dragging': isPanelDragging, 'is-updating': updatingActive }"
+      :class="{ 'is-dragging': isPanelDragging, 'is-updating': updatingActive, 'is-wide': isWide, 'is-closing': 收起中 }"
       :style="panelStyleRef"
       role="dialog"
       aria-label="烟火 · 世界运转"
@@ -706,6 +768,17 @@ function toggleTrail(key: string) {
             <PhGear :size="16" weight="regular" />
           </button>
           <button
+            v-if="!isNarrow"
+            class="yh-icon-btn"
+            :class="{ 'is-on': isWide }"
+            :title="isWide ? '切换紧凑面板' : '切换大面板'"
+            :aria-label="isWide ? '切换紧凑面板' : '切换大面板'"
+            @click="切换大面板"
+          >
+            <PhArrowsInSimple v-if="isWide" :size="16" weight="regular" />
+            <PhArrowsOutSimple v-else :size="16" weight="regular" />
+          </button>
+          <button
             class="yh-icon-btn"
             :title="theme === 'dark' ? '切换白天' : '切换夜晚'"
             @click="theme = theme === 'dark' ? 'light' : 'dark'"
@@ -716,16 +789,18 @@ function toggleTrail(key: string) {
           <button class="yh-icon-btn" title="收起" @click="closePanel"><PhX :size="16" weight="regular" /></button>
         </div>
         <div class="yh-hero">
-          <div class="yh-time-row">
-            <strong class="yh-time-value" :class="{ 'is-long': 时间显示.大.length > 7 }">{{ 时间显示.大 }}</strong>
-            <span v-if="天时" class="yh-ambient" :title="`当前时令：${天时.标签}`">
-              <PhSun v-if="天时.图标 === 'sun'" :size="12" weight="regular" />
-              <PhMoonStars v-else-if="天时.图标 === 'moon'" :size="12" weight="regular" />
-              <PhWind v-else :size="12" weight="regular" />
-              {{ 天时.标签 }}
-            </span>
+          <div class="yh-hero-time">
+            <div class="yh-time-row">
+              <strong class="yh-time-value" :class="{ 'is-long': 时间显示.大.length > 7 }">{{ 时间显示.大 }}</strong>
+              <span v-if="天时" class="yh-ambient" :title="`当前时令：${天时.标签}`">
+                <PhSun v-if="天时.图标 === 'sun'" :size="12" weight="regular" />
+                <PhMoonStars v-else-if="天时.图标 === 'moon'" :size="12" weight="regular" />
+                <PhWind v-else :size="12" weight="regular" />
+                {{ 天时.标签 }}
+              </span>
+            </div>
+            <span v-if="时间显示.小" class="yh-time-sub">{{ 时间显示.小 }}</span>
           </div>
-          <span v-if="时间显示.小" class="yh-time-sub">{{ 时间显示.小 }}</span>
           <p v-if="world.世界.主角所在" class="yh-where">
             <PhMapPin :size="13" weight="bold" />主角所在 · {{ world.世界.主角所在 }}
           </p>
@@ -742,7 +817,7 @@ function toggleTrail(key: string) {
             v-for="分 in 分区"
             :key="分.键"
             class="yh-jump-item"
-            :class="{ 'is-active': 当前分区 === 分.键 }"
+            :class="{ 'is-active': isWide && 分.键 === 'now' ? 简报激活 : 当前分区 === 分.键 }"
             @click="跳到(分.键)"
           >
             {{ 分.名 }}<span v-if="分.数" class="yh-jump-n">{{ 分.数 }}</span>
@@ -1002,6 +1077,45 @@ function toggleTrail(key: string) {
                   ></textarea>
                 </label>
               </div>
+              <div class="yh-set-col">
+                <h3 class="yh-col-title">世界书与标签</h3>
+                <div class="yh-toggles">
+                  <label class="yh-toggle">
+                    <input v-model="settings.运转.读取世界书" type="checkbox" />
+                    <span class="yh-toggle-track"></span>
+                    <span class="yh-toggle-text"
+                      >给世界引擎注入世界书<em>与主AI相同的激活方式，主AI读到什么它读到什么</em></span
+                    >
+                  </label>
+                  <label class="yh-toggle">
+                    <input v-model="settings.运转.读取全局世界书" type="checkbox" />
+                    <span class="yh-toggle-track"></span>
+                    <span class="yh-toggle-text">包含全局世界书<em>默认只读角色卡与聊天绑定的世界书</em></span>
+                  </label>
+                </div>
+                <label class="yh-field">
+                  <span class="yh-field-label">世界书排除条目（每行一条）</span>
+                  <textarea
+                    v-model="worldbookExcludeText"
+                    class="yh-input yh-textarea"
+                    rows="3"
+                    placeholder="标题里含这些字就排除，如&#10;[mvu_update]"
+                  ></textarea>
+                </label>
+                <div class="yh-field-pair">
+                  <label class="yh-field">
+                    <span class="yh-field-label">楼层标签过滤·模式</span>
+                    <select v-model="settings.标签.模式" class="yh-input yh-select">
+                      <option value="排除">排除——删掉这些标签里的内容</option>
+                      <option value="只读">只读——只读这些标签里的内容</option>
+                    </select>
+                  </label>
+                  <label class="yh-field">
+                    <span class="yh-field-label">标签列表（每行一条）</span>
+                    <textarea v-model="tagListText" class="yh-input yh-textarea" rows="3" placeholder="如&#10;thinking&#10;aftertalk"></textarea>
+                  </label>
+                </div>
+              </div>
             </div>
             <div class="yh-set-stack">
               <div class="yh-set-col">
@@ -1143,45 +1257,6 @@ function toggleTrail(key: string) {
                 </label>
               </div>
               <div class="yh-set-col">
-                <h3 class="yh-col-title">世界书与标签</h3>
-                <div class="yh-toggles">
-                  <label class="yh-toggle">
-                    <input v-model="settings.运转.读取世界书" type="checkbox" />
-                    <span class="yh-toggle-track"></span>
-                    <span class="yh-toggle-text"
-                      >给世界引擎注入世界书<em>与主AI相同的激活方式，主AI读到什么它读到什么</em></span
-                    >
-                  </label>
-                  <label class="yh-toggle">
-                    <input v-model="settings.运转.读取全局世界书" type="checkbox" />
-                    <span class="yh-toggle-track"></span>
-                    <span class="yh-toggle-text">包含全局世界书<em>默认只读角色卡与聊天绑定的世界书</em></span>
-                  </label>
-                </div>
-                <label class="yh-field">
-                  <span class="yh-field-label">世界书排除条目（每行一条）</span>
-                  <textarea
-                    v-model="worldbookExcludeText"
-                    class="yh-input yh-textarea"
-                    rows="3"
-                    placeholder="标题里含这些字就排除，如&#10;[mvu_update]"
-                  ></textarea>
-                </label>
-                <div class="yh-field-pair">
-                  <label class="yh-field">
-                    <span class="yh-field-label">楼层标签过滤·模式</span>
-                    <select v-model="settings.标签.模式" class="yh-input yh-select">
-                      <option value="排除">排除——删掉这些标签里的内容</option>
-                      <option value="只读">只读——只读这些标签里的内容</option>
-                    </select>
-                  </label>
-                  <label class="yh-field">
-                    <span class="yh-field-label">标签列表（每行一条）</span>
-                    <textarea v-model="tagListText" class="yh-input yh-textarea" rows="3" placeholder="如&#10;thinking&#10;aftertalk"></textarea>
-                  </label>
-                </div>
-              </div>
-              <div class="yh-set-col">
                 <h3 class="yh-col-title">开局世界模板</h3>
                 <div class="yh-tpl-actions">
                   <button class="yh-btn yh-btn-sm" @click="导出模板到剪贴板">
@@ -1215,8 +1290,17 @@ function toggleTrail(key: string) {
 
           <!-- ============ 简报 ============ -->
           <div v-else class="yh-page yh-brief">
-          <!-- ============ 此刻 ============ -->
-          <section class="yh-sec" data-sec="now">
+          <!-- ============ 此刻 + 动态(大面板报刊主副栏) ============ -->
+          <div
+            class="yh-brief-main"
+            :class="{
+              'is-active-pane': 简报激活,
+              'has-side': Boolean(所在地 || 近期日程.length > 0 || 数据变化.length > 0),
+            }"
+          >
+          <section class="yh-sec yh-sec-now" data-sec="now">
+            <div class="yh-now-banner">
+            <div class="yh-now-lead">
             <div v-if="world.世界.氛围 || world.世界.总览 || 节奏行" class="yh-mood-quote">
               <p v-if="world.世界.氛围" class="yh-now-mood">{{ world.世界.氛围 }}</p>
               <p v-if="world.世界.总览" class="yh-now-trend">{{ world.世界.总览 }}</p>
@@ -1225,6 +1309,8 @@ function toggleTrail(key: string) {
             <p v-if="!hasWorld" class="yh-now-empty">
               世界尚无档案——生成一条 AI 回复后自动建立；或在设置里配好接口后点下方「推进」。
             </p>
+            </div>
+            <div class="yh-now-ctrl">
             <div class="yh-now-actions">
               <button class="yh-btn yh-btn-primary" :disabled="updatingActive" @click="tickNow">
                 <PhLightning :size="13" weight="fill" />
@@ -1243,6 +1329,25 @@ function toggleTrail(key: string) {
                 <PhTrash :size="13" weight="regular" />
                 {{ confirmClear ? '再点一次确认' : '清空' }}
               </button>
+            </div>
+            <div class="yh-chat-speed">
+              <span class="yh-chat-speed-label">传讯速度</span>
+              <select
+                :value="当前传讯速度"
+                class="yh-input yh-select yh-chat-speed-select"
+                aria-label="传讯速度（本聊天）"
+                title="每个聊天单独保存；选定时代后，远方消息按时差传到主角所在地"
+                @change="改传讯速度"
+              >
+                <option v-for="速度 in 传讯速度表" :key="速度" :value="速度">{{ 传讯速度说明[速度] }}</option>
+              </select>
+            </div>
+            <p v-if="!settings.运转.传播时滞" class="yh-chat-speed-hint">设置中「传播时滞」已关闭，当前不会按距离延迟</p>
+            <p class="yh-now-meta">
+              已推进 {{ world.统计.推进次数 }} 次 · 上次 {{ fmtTimestamp(world.统计.最后推进)
+              }}{{ world.小结 ? ` · ${world.小结}` : '' }}
+            </p>
+            </div>
             </div>
             <div v-if="概述会话" class="yh-edit-grid">
               <label class="yh-field">
@@ -1277,25 +1382,9 @@ function toggleTrail(key: string) {
                 ></textarea>
               </label>
             </div>
-            <div class="yh-chat-speed">
-              <span class="yh-chat-speed-label">传讯速度</span>
-              <select
-                :value="当前传讯速度"
-                class="yh-input yh-select yh-chat-speed-select"
-                aria-label="传讯速度（本聊天）"
-                title="每个聊天单独保存；选定时代后，远方消息按时差传到主角所在地"
-                @change="改传讯速度"
-              >
-                <option v-for="速度 in 传讯速度表" :key="速度" :value="速度">{{ 传讯速度说明[速度] }}</option>
-              </select>
-            </div>
-            <p v-if="!settings.运转.传播时滞" class="yh-chat-speed-hint">设置中「传播时滞」已关闭，当前不会按距离延迟</p>
-            <p class="yh-now-meta">
-              已推进 {{ world.统计.推进次数 }} 次 · 上次 {{ fmtTimestamp(world.统计.最后推进)
-              }}{{ world.小结 ? ` · ${world.小结}` : '' }}
-            </p>
           </section>
 
+          <div v-if="所在地 || 近期日程.length > 0 || 数据变化.length > 0" class="yh-now-side">
           <section v-if="所在地" class="yh-sec">
             <h3 class="yh-sec-title">所在地 · {{ 所在地.名 }}</h3>
             <dl class="yh-kv">
@@ -1330,9 +1419,11 @@ function toggleTrail(key: string) {
               </li>
             </ul>
           </section>
+          </div>
 
 <!-- ============ 动态 ============ -->
-          <section class="yh-sec" data-sec="chronicle">
+          <section class="yh-sec yh-sec-chronicle" data-sec="chronicle">
+            <div class="yh-chronicle-head">
             <h3 class="yh-sec-title">动态<span>{{ chronicleEvents.length }} 件</span></h3>
             <div class="yh-filter-row">
               <div class="yh-chip-group">
@@ -1358,12 +1449,13 @@ function toggleTrail(key: string) {
                 </button>
               </div>
             </div>
+            </div>
             <ol v-if="chronicleEvents.length > 0" class="yh-feed">
               <li
                 v-for="(event, index) in chronicleEvents"
                 :key="event.id || `${event.标题}-${index}`"
                 class="yh-feed-item"
-                :class="[`is-${event.阶段}`, `scale-${event.规模}`]"
+                :class="[`is-${event.阶段}`, `scale-${event.规模}`, { 'is-editing': 同一条事件(editingEvent, event) }]"
               >
                 <div class="yh-feed-main">
                   <template v-if="同一条事件(editingEvent, event)">
@@ -1473,11 +1565,13 @@ function toggleTrail(key: string) {
               <p>{{ stageFilter === '已结束' ? '还没有了结的事' : '无事发生——世界很安静' }}</p>
             </div>
           </section>
+          </div>
 
 <!-- ============ 组织 ============ -->
-          <section class="yh-sec" data-sec="factions">
+          <section class="yh-sec yh-sec-factions" :class="{ 'is-active-pane': 当前分区 === 'factions' }" data-sec="factions">
             <h3 class="yh-sec-title">组织<span>{{ factionEntries.length }} 个</span></h3>
-            <div v-if="factionEntries.length > 0" class="yh-fac-chips">
+            <div v-if="factionEntries.length > 0" class="yh-fac-layout">
+            <div class="yh-fac-chips">
               <button
                 v-for="[name] in factionEntries"
                 :key="name"
@@ -1487,10 +1581,6 @@ function toggleTrail(key: string) {
               >
                 {{ name }}<span v-if="diff变更组织.has(name)" class="yh-diff-dot" title="本轮有更新"></span>
               </button>
-            </div>
-            <div v-else class="yh-empty yh-empty-slim">
-              <PhGraph :size="22" weight="light" />
-              <p>尚无组织档案<br />世界推进后自动识别</p>
             </div>
             <div v-if="selectedFactionData" class="yh-detail">
                 <div class="yh-detail-head">
@@ -1585,10 +1675,15 @@ function toggleTrail(key: string) {
                 </div>
                 <p class="yh-detail-hint">组织动向由世界推进自动维护, 也可在此手动修改(保存后同步注入)。</p>
             </div>
+            </div>
+            <div v-else class="yh-empty yh-empty-slim">
+              <PhGraph :size="22" weight="light" />
+              <p>尚无组织档案<br />世界推进后自动识别</p>
+            </div>
           </section>
 
 <!-- ============ 世界 ============ -->
-          <section class="yh-sec" data-sec="world">
+          <section class="yh-sec yh-sec-world" :class="{ 'is-active-pane': 当前分区 === 'world' }" data-sec="world">
             <h3 class="yh-sec-title">档案</h3>
             <p v-if="!hasWorld" class="yh-world-hint">世界尚无档案——推进后自动建立, 也可用各区块的「新增」手动建档</p>
             <div class="yh-world-body">

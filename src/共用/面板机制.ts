@@ -293,11 +293,20 @@ export function 使用面板机制(配置: 面板机制配置) {
     height: `${panelH.value}px`,
   }));
 
+  /** 面板打开瞬间若球被外部摆到了别处(如收纳栏), 记住它的真实中心与缩放比, 打开态球留在原地不跳回旧位 */
+  const 打开态球位 = ref<{ x: number; y: number; scale: number } | null>(null);
+
+  function 有效球心(): { x: number; y: number; scale: number } {
+    if (panelOpen.value && 打开态球位.value) return 打开态球位.value;
+    return { x: anchorX.value, y: anchorY.value, scale: 1 };
+  }
+
   function applyFrame() {
     const target = frame.value;
     if (!target) return;
     兜底球心();
     if (!panelOpen.value) {
+      打开态球位.value = null;
       // 关闭: iframe 缩到球的大小跟随锚点, 不遮挡酒馆其他区域。
       // iframe 元素本身也裁成圆形——否则四个透明方角会把底下(可能是浅色的)楼层界面露出来,
       // 看起来就像球自带一个方形背景
@@ -313,11 +322,24 @@ export function 使用面板机制(配置: 面板机制配置) {
       syncPanelShadow();
       return;
     }
+    // 刚从关闭切到打开、iframe 尚未撑大时，若球真实矩形偏离 anchorX/Y（例如正停在收纳栏槽位里），
+    // 记下真实球心与缩放比，避免打开面板瞬间球跳回未收纳前的老位置
+    if (!打开态球位.value) {
+      const r = target.getBoundingClientRect();
+      if (r.width > 4 && r.width <= CLOSED_SIZE + 8 && r.height > 4 && r.height <= CLOSED_SIZE + 8) {
+        const rcx = r.left + r.width / 2;
+        const rcy = r.top + r.height / 2;
+        if (Math.abs(rcx - anchorX.value) > 2 || Math.abs(rcy - anchorY.value) > 2 || r.width < CLOSED_SIZE - 2) {
+          打开态球位.value = { x: rcx, y: rcy, scale: Math.min(1, r.width / CLOSED_SIZE) };
+        }
+      }
+    }
     // 打开: iframe 罩住"面板+球"的联合矩形, 其余区域酒馆照常可点
     computePanelSize();
     const panel = panelRectView.value;
-    const orbL = clamp(anchorX.value - CLOSED_SIZE / 2, 0, Math.max(0, viewportW() - CLOSED_SIZE));
-    const orbT = clamp(anchorY.value - CLOSED_SIZE / 2, 0, Math.max(0, viewportH() - CLOSED_SIZE));
+    const 球 = 有效球心();
+    const orbL = clamp(球.x - CLOSED_SIZE / 2, 0, Math.max(0, viewportW() - CLOSED_SIZE));
+    const orbT = clamp(球.y - CLOSED_SIZE / 2, 0, Math.max(0, viewportH() - CLOSED_SIZE));
     const left = Math.max(0, Math.min(orbL, panel.x) - 4);
     const top = Math.max(0, Math.min(orbT, panel.y) - 4);
     const right = Math.min(viewportW(), Math.max(orbL + CLOSED_SIZE, panel.x + panelW.value) + 4);
@@ -333,9 +355,9 @@ export function 使用面板机制(配置: 面板机制配置) {
     // 元素——clip-path 会同时裁剪渲染与命中测试。面板的阴影不画在 iframe 内(会被裁出硬边),
     // 而是画在酒馆页面上的阴影层里(syncPanelShadow)。
     const pad = 4;
-    const r = CLOSED_SIZE / 2 + 4;
-    const bcx = anchorX.value - left;
-    const bcy = anchorY.value - top;
+    const r = (CLOSED_SIZE * 球.scale) / 2 + 4;
+    const bcx = 球.x - left;
+    const bcy = 球.y - top;
     const px = panel.x - left - pad;
     const py = panel.y - top - pad;
     const pw = panelW.value + pad * 2;
@@ -393,15 +415,17 @@ export function 使用面板机制(配置: 面板机制配置) {
     applyToastTheme();
   });
 
-  /** 球在 iframe 内的位置: 关闭时填满小 iframe, 打开时按锚点相对 iframe 原点定位 */
+  /** 球在 iframe 内的位置: 关闭时填满小 iframe, 打开时按有效球心相对 iframe 原点定位 */
   const orbStyle = computed(() => {
     兜底球心();
-    return panelOpen.value
-      ? {
-          left: `${clamp(anchorX.value - CLOSED_SIZE / 2, 0, Math.max(0, viewportW() - CLOSED_SIZE)) - frameOrigin.value.x}px`,
-          top: `${clamp(anchorY.value - CLOSED_SIZE / 2, 0, Math.max(0, viewportH() - CLOSED_SIZE)) - frameOrigin.value.y}px`,
-        }
-      : { left: '0px', top: '0px' };
+    if (!panelOpen.value) return { left: '0px', top: '0px' };
+    const 球 = 有效球心();
+    const style: Record<string, string> = {
+      left: `${clamp(球.x - CLOSED_SIZE / 2, 0, Math.max(0, viewportW() - CLOSED_SIZE)) - frameOrigin.value.x}px`,
+      top: `${clamp(球.y - CLOSED_SIZE / 2, 0, Math.max(0, viewportH() - CLOSED_SIZE)) - frameOrigin.value.y}px`,
+    };
+    if (球.scale < 0.99) style.scale = 球.scale.toFixed(4);
+    return style;
   });
 
   let startX = 0;

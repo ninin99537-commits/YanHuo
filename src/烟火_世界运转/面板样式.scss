@@ -1,13 +1,16 @@
 // ===========================================================================
 // 烟火 · 面板样式(悬浮球界面.vue 用 <style lang="scss" src> 引入; 不加 scoped: 世界编辑表单.vue 也用这套 .yh-*)
 //
-// v2.9.7「简报」: 石墨底 + 钴蓝(唯一的强调色) + 红(只给重大事件、错误、危险操作), 其余全是中性灰。
+// 「长夜灯火 / 霁月素笺」:
+//   - 夜色: 深曜石炭 + 赤焰炉火(主色) + 朱砂印(重大事件/错误/危险) + 松石青(在线点缀)
+//   - 昼间: 清润素笺 + 赤陶炉火 + 朱印 + 竹青
+//   - 排版: 衬线标题(--yh-serif) + 无衬线正文(--yh-sans) + 等宽时码(--yh-mono)
 //
 // 两层来源, 各管各的:
 //   1. 颜色 / 字体族 / 球径 / 层序 → 主题.ts(取根变量 → .yh-root 的内联样式), 这里一律只写 var(...);
 //      ⚠ 本文件不许声明任何自定义属性(tests/yanhuo-theme.test.ts 会拦);
 //   2. 字号 / 字重 / 行高 / 圆角 / 时长 → 下面的 SCSS 变量。它们不随主题变, 不必过 JS。
-//      新写样式**只许**用这些变量, 不要再手写 11.5px / 650 之类的散值。
+//      新写样式**只许**用这些变量, 不要再手写散值。
 //
 // ⚠ 不写按宽度的媒体查询: iframe 的视口就是"球 ∪ 面板"那块矩形(面板约 400px 宽),
 //   max-width 之类在桌面上也会命中。窄屏由面板机制把面板铺满视口, 这里只管单栏排版;
@@ -15,18 +18,13 @@
 // ===========================================================================
 
 // ---- 字号: 两档小字 + 正文 + 两档标题 + 两档大时间 ----
-//   2xs  徽标、计数、代码、时间戳这类"附注里的附注"
-//   xs   次要文字: 元信息、说明、标签、小标题
-//   sm   正文(根字号)与常规按钮
-//   md   列表条目标题、指标数值
-//   lg   段内大标题(此刻的态势、组织名)
 $fs-2xs: 11px;
 $fs-xs: 12px;
 $fs-sm: 13px;
 $fs-md: 15px;
 $fs-lg: 16px;
-$fs-display-sm: 26px;
-$fs-display: 40px;
+$fs-display-sm: 24px;
+$fs-display: 34px;
 
 // ---- 字重: 只有四档 ----
 $fw-regular: 400;
@@ -35,31 +33,31 @@ $fw-semibold: 600;
 $fw-bold: 700;
 
 // ---- 行高 ----
-$lh-display: 1.1;
+$lh-display: 1.08;
 $lh-tight: 1.25;
 $lh-snug: 1.4;
 $lh-normal: 1.5;
 $lh-base: 1.6;
 
 // ---- 圆角 ----
-$r-xs: 6px;
+$r-xs: 5px;
 $r-sm: 8px;
-$r-md: 10px;
-$r-lg: 14px;
+$r-md: 11px;
+$r-lg: 16px;
 $r-pill: 999px;
 
-// ---- 时长 ----
-$dur: 0.15s;
+// ---- 时长与缓动 ----
+$dur: 0.16s;
+$ease: cubic-bezier(0.22, 1, 0.36, 1);
 
 // ---------------------------------------------------------------------------
-// mixin: 重复了三遍以上的写法收在这里
+// mixin
 // ---------------------------------------------------------------------------
 
 @mixin num {
   font-variant-numeric: tabular-nums;
 }
 
-// 次要文字: 小一号 + 最淡的墨色
 @mixin faint($size: $fs-xs) {
   font-size: $size;
   color: var(--yh-ink-faint);
@@ -68,10 +66,9 @@ $dur: 0.15s;
 @mixin ease($props...) {
   transition-property: $props;
   transition-duration: $dur;
-  transition-timing-function: ease-out;
+  transition-timing-function: $ease;
 }
 
-// 竖排列表: 条目之间一条细线, 第一条不画
 @mixin divided {
   border-top: 1px solid var(--yh-line);
   &:first-child {
@@ -79,14 +76,12 @@ $dur: 0.15s;
   }
 }
 
-// 抬起一层的卡片面
 @mixin surface($line: var(--yh-line)) {
   background: var(--yh-raise);
   border: 1px solid $line;
   border-radius: $r-md;
 }
 
-// 等宽代码块(请求 / 响应 / 控制台)
 @mixin code-surface {
   max-height: 220px;
   overflow-y: auto;
@@ -100,7 +95,6 @@ $dur: 0.15s;
   word-break: break-all;
 }
 
-// 无底色的方形图标按钮
 @mixin ghost-icon($size, $radius, $color: var(--yh-ink-dim)) {
   display: inline-grid;
   place-items: center;
@@ -120,16 +114,18 @@ $dur: 0.15s;
   }
 }
 
-// 左标签右内容的两列表(dt / dd)
 @mixin kv-grid {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
   dt {
+    font-size: $fs-xs;
     color: var(--yh-ink-faint);
+    padding-top: 1px;
   }
   dd {
     margin: 0;
     min-width: 0;
+    color: var(--yh-ink);
   }
 }
 
@@ -144,7 +140,6 @@ $dur: 0.15s;
   pointer-events: none;
   z-index: var(--yh-z-root);
   -webkit-font-smoothing: antialiased;
-  // 让原生控件(select 下拉、滚动条、数字框箭头)跟着主题走, 深色下不再弹出白底下拉
   color-scheme: dark;
   &[data-theme='light'] {
     color-scheme: light;
@@ -164,7 +159,6 @@ $dur: 0.15s;
     color: inherit;
   }
 
-  // 浏览器默认的 bold 是 700, 面板里的强调只要半粗
   strong,
   b {
     font-weight: $fw-semibold;
@@ -181,7 +175,8 @@ $dur: 0.15s;
     padding: 0;
     border-radius: 50%;
     border: 1px solid var(--yh-line-strong);
-    background: var(--yh-panel);
+    background: var(--yh-orb-bg);
+    box-shadow: var(--yh-orb-shadow);
     color: var(--yh-accent);
     cursor: grab;
     appearance: none;
@@ -190,7 +185,7 @@ $dur: 0.15s;
     // 触屏拖动: 禁止浏览器把 pointermove 当滚动/长按手势吞掉, 拖球才跟手
     touch-action: none;
     z-index: var(--yh-z-orb);
-    transition: border-color 0.18s ease-out;
+    @include ease(border-color, box-shadow);
 
     // logo: 原始 20px, 居中只靠上面的 place-items: center —— 不许位移、不许缩小
     // (需求方 #894 / #895; 判据 tests/yanhuo-panel-v297.test.ts)
@@ -199,6 +194,7 @@ $dur: 0.15s;
       height: 20px;
       // 火焰摆动动画的原点, 不是位置偏移
       transform-origin: 50% 80%;
+      filter: drop-shadow(0 0 6px var(--yh-accent-soft));
     }
     // 推进中的转圈弧: 画在边线以内(面板关着时 iframe 只有一个球那么大, 圆外会被裁掉)
     &::after {
@@ -261,6 +257,8 @@ $dur: 0.15s;
   }
   .yh-header {
     flex: none;
+    background: linear-gradient(180deg, var(--yh-panel-top) 0%, var(--yh-panel) 100%);
+    box-shadow: inset 0 1px 0 var(--yh-inner-glow);
     cursor: grab;
     user-select: none;
     // 触屏拖动面板: 禁止浏览器手势接管 pointermove(同悬浮球)
@@ -274,13 +272,28 @@ $dur: 0.15s;
     align-items: center;
     gap: 6px;
     min-width: 0;
-    padding: 10px 8px 0 16px;
+    padding: 11px 10px 0 16px;
+  }
+  .yh-brand {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-right: 4px;
+  }
+  .yh-brand-mark {
+    flex: none;
+    width: 15px;
+    height: 15px;
+    color: var(--yh-accent);
   }
   .yh-brand-name {
     flex: none;
+    font-family: var(--yh-serif);
+    font-size: $fs-md;
     font-weight: $fw-bold;
-    letter-spacing: 0.12em;
-    margin-right: 4px;
+    letter-spacing: 0.14em;
+    line-height: 1;
   }
   .yh-spacer {
     flex: 1;
@@ -288,9 +301,13 @@ $dur: 0.15s;
   .yh-status {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
     min-width: 0;
-    font-size: $fs-xs;
+    padding: 2px 8px;
+    border-radius: $r-pill;
+    background: var(--yh-raise);
+    border: 1px solid var(--yh-line);
+    font-size: $fs-2xs;
     color: var(--yh-ink-dim);
     white-space: nowrap;
     overflow: hidden;
@@ -302,11 +319,18 @@ $dur: 0.15s;
       border-radius: 50%;
       background: var(--yh-ink-faint);
     }
-    &.is-on .yh-status-dot {
-      background: var(--yh-accent);
+    &.is-on {
+      color: var(--yh-jade);
+      background: var(--yh-jade-soft);
+      border-color: transparent;
+      .yh-status-dot {
+        background: var(--yh-jade);
+      }
     }
     &.is-running {
       color: var(--yh-accent);
+      background: var(--yh-accent-soft);
+      border-color: var(--yh-accent-line);
       .yh-status-dot {
         background: var(--yh-accent);
       }
@@ -314,7 +338,7 @@ $dur: 0.15s;
   }
   .yh-icon-btn {
     flex: none;
-    @include ghost-icon(30px, $r-sm);
+    @include ghost-icon(28px, $r-sm);
     svg {
       display: block;
     }
@@ -324,12 +348,13 @@ $dur: 0.15s;
     }
   }
 
-  // 抬头: 时间是整块面板最大的字
+  // 抬头: 时间是整块面板最大的字(衬线 + tabular-nums)
   .yh-hero {
-    padding: 8px 16px 0;
+    padding: 10px 16px 0;
   }
   .yh-time-value {
     display: block;
+    font-family: var(--yh-serif);
     font-size: $fs-display;
     font-weight: $fw-bold;
     line-height: $lh-display;
@@ -344,22 +369,29 @@ $dur: 0.15s;
   }
   .yh-time-sub {
     display: block;
-    margin-top: 4px;
+    margin-top: 3px;
+    font-size: $fs-xs;
     color: var(--yh-ink-dim);
     @include num;
   }
   .yh-where {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 6px;
-    margin: 8px 0 0;
-    font-weight: $fw-semibold;
+    gap: 5px;
+    margin: 9px 0 0;
+    padding: 3px 10px 3px 8px;
+    border-radius: $r-pill;
+    background: var(--yh-accent-soft);
+    border: 1px solid var(--yh-accent-line);
+    font-size: $fs-xs;
+    font-weight: $fw-medium;
+    color: var(--yh-ink);
     svg {
       flex: none;
       color: var(--yh-accent);
     }
   }
-  // 推进进度: 时间下面一根细线, 推进中才有颜色
+  // 推进进度: 时间下面一根细流光线, 推进中才有颜色
   .yh-progress {
     position: relative;
     height: 2px;
@@ -371,7 +403,7 @@ $dur: 0.15s;
       bottom: 0;
       left: -40%;
       width: 40%;
-      background: var(--yh-accent);
+      background: linear-gradient(90deg, transparent, var(--yh-accent), var(--yh-accent-bright), transparent);
       opacity: 0;
     }
   }
@@ -386,9 +418,11 @@ $dur: 0.15s;
   .yh-jump {
     flex: none;
     display: flex;
-    gap: 2px;
-    padding: 6px 10px;
+    align-items: center;
+    gap: 4px;
+    padding: 7px 12px;
     border-bottom: 1px solid var(--yh-line);
+    background: var(--yh-panel);
     overflow-x: auto;
     scrollbar-width: none;
     &::-webkit-scrollbar {
@@ -400,18 +434,25 @@ $dur: 0.15s;
     flex: none;
     display: inline-flex;
     align-items: center;
-    gap: 3px;
+    gap: 4px;
     padding: 4px 10px;
     border: 0;
     border-radius: $r-pill;
     background: transparent;
     color: var(--yh-ink-dim);
+    font-size: $fs-xs;
+    font-weight: $fw-medium;
     cursor: pointer;
-    @include ease(background, color);
+    @include ease(background, color, box-shadow);
     &:hover {
       background: var(--yh-hover);
       color: var(--yh-ink);
     }
+  }
+  .yh-jump-item.is-active {
+    background: var(--yh-raise);
+    color: var(--yh-ink);
+    box-shadow: inset 0 0 0 1px var(--yh-line-strong);
   }
   .yh-jump-back {
     padding-left: 6px;
@@ -419,7 +460,9 @@ $dur: 0.15s;
     font-weight: $fw-semibold;
   }
   .yh-jump-n {
-    @include faint($fs-2xs);
+    font-family: var(--yh-mono);
+    font-size: $fs-2xs;
+    color: var(--yh-accent);
     @include num;
   }
 
@@ -435,10 +478,10 @@ $dur: 0.15s;
   .yh-page {
     display: flex;
     flex-direction: column;
-    padding: 4px 16px 24px;
+    padding: 6px 16px 26px;
   }
   .yh-sec {
-    padding: 16px 0 4px;
+    padding: 14px 0 4px;
     & + .yh-sec {
       margin-top: 12px;
       border-top: 1px solid var(--yh-line);
@@ -449,45 +492,59 @@ $dur: 0.15s;
   .yh-col-title {
     margin: 0;
     font-weight: $fw-semibold;
+    letter-spacing: 0.06em;
     @include faint;
   }
   .yh-sec-title {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
     span {
+      font-family: var(--yh-mono);
+      font-size: $fs-2xs;
       font-weight: $fw-regular;
       @include num;
     }
   }
 
   // ---- 此刻 ----
+  .yh-mood-quote {
+    padding: 11px 13px 11px 14px;
+    @include surface;
+    border-left: 3px solid var(--yh-accent);
+  }
   .yh-now-mood {
     margin: 0;
+    font-family: var(--yh-serif);
     font-size: $fs-lg;
-    font-weight: $fw-medium;
+    font-weight: $fw-semibold;
+    line-height: $lh-normal;
+    color: var(--yh-ink);
   }
   .yh-now-trend {
     margin: 6px 0 0;
     color: var(--yh-ink-dim);
   }
   .yh-now-pace {
-    margin: 10px 0 0;
-    @include faint;
+    margin: 8px 0 0;
+    font-family: var(--yh-mono);
+    @include faint($fs-2xs);
     @include num;
   }
   .yh-now-empty {
     margin: 0;
+    padding: 11px 13px;
+    @include surface;
     color: var(--yh-ink-dim);
   }
   .yh-now-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 14px;
+    gap: 7px;
+    margin-top: 12px;
     .yh-btn-primary {
-      flex: 1 1 110px;
+      flex: 1 1 104px;
     }
     .yh-btn-danger {
       margin-left: auto;
@@ -498,26 +555,36 @@ $dur: 0.15s;
     align-items: center;
     gap: 8px;
     margin-top: 10px;
+    padding: 3px 10px;
+    border-radius: $r-sm;
+    background: var(--yh-bg);
+    border: 1px solid var(--yh-line);
+    // 用复合选择器盖过后面 .yh-input / .yh-select 的边框与底色, 避免双层套框
+    .yh-chat-speed-select {
+      flex: 1;
+      height: 28px;
+      padding: 2px 24px 2px 4px;
+      border: 0;
+      background-color: transparent;
+      font-size: $fs-xs;
+      &:focus {
+        box-shadow: none;
+      }
+    }
   }
   .yh-chat-speed-label {
     flex: none;
     font-size: $fs-xs;
-    color: var(--yh-ink-dim);
+    color: var(--yh-ink-faint);
     white-space: nowrap;
   }
-  .yh-chat-speed-select {
-    flex: 1;
-    height: 30px;
-    padding: 3px 26px 3px 9px;
-    font-size: $fs-xs;
-  }
   .yh-chat-speed-hint {
-    margin: 4px 0 0;
-    @include faint;
+    margin: 5px 0 0;
+    @include faint($fs-2xs);
   }
   .yh-now-meta {
-    margin: 14px 0 0;
-    @include faint;
+    margin: 10px 0 0;
+    @include faint($fs-2xs);
   }
   .yh-edit-grid {
     display: grid;
@@ -525,32 +592,38 @@ $dur: 0.15s;
     gap: 9px 10px;
     margin-top: 12px;
     padding: 12px;
-    @include surface;
+    @include surface(var(--yh-accent-line));
     .yh-field-wide {
       grid-column: 1 / -1;
     }
   }
   .yh-kv {
     @include kv-grid;
-    gap: 6px 12px;
+    gap: 7px 10px;
     margin: 0;
+    padding: 11px 13px;
+    @include surface;
   }
   .yh-rows {
     list-style: none;
     margin: 0;
     padding: 0;
+    @include surface;
+    overflow: hidden;
     li {
       display: flex;
-      gap: 12px;
-      padding: 7px 0;
+      align-items: baseline;
+      gap: 10px;
+      padding: 8px 12px;
       @include divided;
     }
   }
   .yh-rows-k {
     flex: none;
-    width: 64px;
-    padding-top: 1px;
-    @include faint;
+    min-width: 58px;
+    font-family: var(--yh-mono);
+    font-size: $fs-2xs;
+    color: var(--yh-accent);
     @include num;
   }
   .yh-rows-v {
@@ -570,15 +643,15 @@ $dur: 0.15s;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    height: 32px;
-    padding: 0 12px;
+    gap: 5px;
+    height: 31px;
+    padding: 0 11px;
     border-radius: $r-sm;
-    border: 1px solid var(--yh-line);
+    border: 1px solid var(--yh-line-strong);
     background: var(--yh-raise);
     color: var(--yh-ink);
     cursor: pointer;
-    font-size: $fs-sm;
+    font-size: $fs-xs;
     font-weight: $fw-medium;
     white-space: nowrap;
     @include ease(background, border-color, color);
@@ -586,7 +659,7 @@ $dur: 0.15s;
       background: var(--yh-hover);
     }
     &:disabled {
-      opacity: 0.5;
+      opacity: 0.48;
       cursor: not-allowed;
     }
     &.yh-btn-primary {
@@ -595,7 +668,8 @@ $dur: 0.15s;
       color: var(--yh-on-accent);
       font-weight: $fw-semibold;
       &:hover:not(:disabled) {
-        background: color-mix(in srgb, var(--yh-accent) 88%, var(--yh-ink));
+        background: var(--yh-accent-bright);
+        border-color: var(--yh-accent-bright);
       }
     }
     &.yh-btn-danger {
@@ -607,13 +681,13 @@ $dur: 0.15s;
         background: var(--yh-seal-soft);
       }
       &.is-confirm {
-        border-color: var(--yh-seal);
+        border-color: var(--yh-seal-line);
       }
     }
     &.yh-btn-sm {
-      height: 26px;
+      height: 25px;
       padding: 0 9px;
-      font-size: $fs-xs;
+      font-size: $fs-2xs;
       border-radius: $r-xs;
     }
     &.yh-interrupt {
@@ -623,8 +697,8 @@ $dur: 0.15s;
       border-color: var(--yh-line-strong);
       background: transparent;
       &:hover:not(:disabled) {
-        background: transparent;
-        border-color: var(--yh-seal);
+        background: var(--yh-seal-soft);
+        border-color: var(--yh-seal-line);
         color: var(--yh-seal);
       }
     }
@@ -635,20 +709,20 @@ $dur: 0.15s;
     display: flex;
     flex-wrap: wrap;
     gap: 6px 10px;
-    margin-bottom: 4px;
+    margin-bottom: 10px;
   }
   .yh-chip-group,
   .yh-tags {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 5px;
   }
   .yh-tags {
     margin-top: 8px;
   }
   .yh-chip {
-    padding: 1px 10px;
-    border: 1px solid var(--yh-line);
+    padding: 2px 10px;
+    border: 1px solid var(--yh-line-strong);
     border-radius: $r-pill;
     background: transparent;
     color: var(--yh-ink-dim);
@@ -657,12 +731,13 @@ $dur: 0.15s;
     @include ease(background, border-color, color);
     &:hover {
       color: var(--yh-ink);
-      border-color: var(--yh-line-strong);
+      border-color: var(--yh-accent-line);
     }
     &.is-active {
       background: var(--yh-ink);
       border-color: var(--yh-ink);
       color: var(--yh-panel);
+      font-weight: $fw-medium;
     }
   }
   .yh-badge {
@@ -670,21 +745,23 @@ $dur: 0.15s;
     align-items: center;
     gap: 3px;
     max-width: 100%;
-    padding: 0 6px;
+    padding: 1px 7px;
     border: 1px solid transparent;
     border-radius: $r-xs;
-    background: var(--yh-raise);
+    background: var(--yh-bg);
     color: var(--yh-ink-dim);
     font-size: $fs-2xs;
-    line-height: 18px;
+    line-height: 17px;
     &.yh-badge-重大 {
       background: var(--yh-seal-soft);
       color: var(--yh-seal);
+      font-weight: $fw-semibold;
     }
     &.yh-badge-urgent,
     &.yh-badge-add {
       background: var(--yh-accent-soft);
       color: var(--yh-accent);
+      font-weight: $fw-medium;
     }
     &.yh-badge-secret {
       background: transparent;
@@ -698,33 +775,33 @@ $dur: 0.15s;
     }
     &.yh-badge-plain {
       background: transparent;
-      border-color: var(--yh-line);
+      border-color: var(--yh-line-strong);
     }
   }
 
-  // ---- 动态 ----
+  // ---- 动态(卡片化 + 重大朱砂印条) ----
   .yh-feed {
     list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
     margin: 0;
     padding: 0;
   }
   .yh-feed-item {
     position: relative;
-    padding: 12px 0;
-    @include divided;
-    // 重大: 标题前一块红色小方印; 已结束: 整条变淡
-    &.scale-重大 .yh-feed-title::before {
-      content: '';
-      display: inline-block;
-      width: 8px;
-      height: 8px;
-      margin-right: 8px;
-      border-radius: 2px;
-      background: var(--yh-seal);
-      vertical-align: 2px;
+    padding: 11px 13px;
+    @include surface;
+    @include ease(border-color);
+    &:hover {
+      border-color: var(--yh-line-strong);
+    }
+    // 重大: 左侧朱砂印条(底部徽标已标"重大", 标题前不再叠小方块); 已结束: 整卡变淡
+    &.scale-重大 {
+      border-left: 3px solid var(--yh-seal);
     }
     &.is-已结束 {
-      opacity: 0.55;
+      opacity: 0.58;
     }
     &:hover,
     &:focus-within {
@@ -740,20 +817,22 @@ $dur: 0.15s;
   .yh-feed-meta-top {
     display: flex;
     flex-wrap: wrap;
-    gap: 2px 8px;
-    padding-right: 56px;
-    @include faint;
+    gap: 2px 7px;
+    padding-right: 52px;
+    font-family: var(--yh-mono);
+    @include faint($fs-2xs);
     @include num;
     span + span::before {
       content: '·';
-      margin-right: 8px;
+      margin-right: 7px;
     }
   }
   .yh-feed-head {
-    margin-top: 3px;
+    margin-top: 4px;
   }
   .yh-feed-title {
     display: block;
+    font-family: var(--yh-serif);
     font-size: $fs-md;
     font-weight: $fw-semibold;
     line-height: $lh-snug;
@@ -768,20 +847,21 @@ $dur: 0.15s;
     color: var(--yh-ink-faint);
   }
   .yh-feed-edit {
-    right: 26px;
+    right: 32px;
   }
   .yh-feed-remove {
-    right: 0;
+    right: 6px;
     &:hover {
       color: var(--yh-seal);
+      background: var(--yh-seal-soft);
     }
   }
   .yh-feed-desc {
-    margin: 2px 0 0;
+    margin: 4px 0 0;
     color: var(--yh-ink-dim);
   }
   .yh-feed-cause {
-    margin: 4px 0 0;
+    margin: 5px 0 0;
     @include faint;
   }
   .yh-collapse {
@@ -798,24 +878,24 @@ $dur: 0.15s;
       color: var(--yh-ink);
     }
     svg {
-      transition: transform $dur;
+      transition: transform $dur $ease;
       &.is-flipped {
         transform: rotate(-90deg);
       }
     }
   }
   .yh-trail-toggle {
-    margin-top: 6px;
+    margin-top: 7px;
     @include faint;
   }
   .yh-feed-trail {
     list-style: none;
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    margin: 4px 0 0;
-    padding: 2px 0 2px 12px;
-    border-left: 2px solid var(--yh-line-strong);
+    gap: 5px;
+    margin: 5px 0 0;
+    padding: 3px 0 2px 12px;
+    border-left: 2px solid var(--yh-accent-line);
     li {
       display: flex;
       align-items: baseline;
@@ -824,6 +904,7 @@ $dur: 0.15s;
   }
   .yh-trail-time {
     flex: none;
+    font-family: var(--yh-mono);
     @include faint($fs-2xs);
     @include num;
   }
@@ -851,16 +932,20 @@ $dur: 0.15s;
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
     .yh-chip {
       padding: 3px 11px;
-      font-size: $fs-sm;
+      font-size: $fs-xs;
       &.is-active {
         background: var(--yh-accent-soft);
         border-color: var(--yh-accent-line);
-        color: var(--yh-ink);
+        color: var(--yh-accent);
       }
     }
+  }
+  .yh-detail {
+    padding: 12px 14px;
+    @include surface;
   }
   .yh-detail-head {
     display: flex;
@@ -870,6 +955,7 @@ $dur: 0.15s;
     margin-bottom: 6px;
     h3 {
       margin: 0;
+      font-family: var(--yh-serif);
       font-size: $fs-lg;
       font-weight: $fw-bold;
       line-height: $lh-snug;
@@ -886,26 +972,25 @@ $dur: 0.15s;
   }
   .yh-detail-row {
     @include kv-grid;
-    gap: 12px;
+    gap: 10px;
     padding: 7px 0;
     @include divided;
   }
   .yh-detail-hint {
     margin: 10px 0 0;
-    @include faint;
+    @include faint($fs-2xs);
   }
   .yh-mini-title {
-    color: var(--yh-ink);
+    color: var(--yh-accent);
     cursor: pointer;
     text-decoration: underline;
-    text-decoration-color: var(--yh-line-strong);
+    text-decoration-color: var(--yh-accent-line);
     text-underline-offset: 3px;
     &:hover {
-      color: var(--yh-accent);
+      color: var(--yh-accent-bright);
       text-decoration-color: currentColor;
     }
   }
-  // 组织详情里"关联事件"那一串可点的标题
   .yh-related-event {
     display: inline-block;
     margin-right: 10px;
@@ -926,7 +1011,7 @@ $dur: 0.15s;
       display: flex;
       align-items: center;
       gap: 7px;
-      padding: 9px 0;
+      padding: 10px 0;
       list-style: none;
       cursor: pointer;
       user-select: none;
@@ -936,13 +1021,14 @@ $dur: 0.15s;
       }
       em {
         font-style: normal;
+        font-family: var(--yh-mono);
         font-weight: $fw-regular;
         @include faint($fs-2xs);
         @include num;
       }
       .yh-world-caret {
         color: var(--yh-ink-faint);
-        transition: transform $dur ease;
+        transition: transform $dur $ease;
       }
       &:hover {
         color: var(--yh-accent);
@@ -950,6 +1036,9 @@ $dur: 0.15s;
     }
     &:not([open]) > summary .yh-world-caret {
       transform: rotate(-90deg);
+    }
+    > .yh-mini-empty {
+      padding: 2px 0 10px;
     }
   }
   .yh-world-add {
@@ -974,7 +1063,7 @@ $dur: 0.15s;
     gap: 8px;
   }
   .yh-world-card {
-    padding: 9px 12px 10px;
+    padding: 10px 12px;
     @include surface;
   }
   .yh-world-card-head {
@@ -982,10 +1071,13 @@ $dur: 0.15s;
     align-items: baseline;
     flex-wrap: wrap;
     gap: 6px;
+    strong {
+      font-family: var(--yh-serif);
+    }
   }
   .yh-world-delta {
     line-height: $lh-snug;
-    @include faint;
+    @include faint($fs-2xs);
   }
   .yh-world-main {
     margin: 4px 0 0;
@@ -1023,7 +1115,7 @@ $dur: 0.15s;
   .yh-metric-card {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 3px;
   }
   .yh-metric-top {
     display: flex;
@@ -1039,6 +1131,7 @@ $dur: 0.15s;
   }
   .yh-metric-value {
     margin-left: auto;
+    font-family: var(--yh-mono);
     font-size: $fs-md;
     font-weight: $fw-bold;
     @include num;
@@ -1046,7 +1139,7 @@ $dur: 0.15s;
   .yh-metric-trend,
   .yh-metric-note {
     margin: 0;
-    @include faint;
+    @include faint($fs-2xs);
   }
   .yh-world-card-actions {
     display: flex;
@@ -1075,6 +1168,10 @@ $dur: 0.15s;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    strong {
+      font-family: var(--yh-serif);
+      font-size: $fs-md;
+    }
   }
 
   // ---- 日志(子页, 单栏) ----
@@ -1093,15 +1190,24 @@ $dur: 0.15s;
   .yh-log-right {
     padding-top: 14px;
     border-top: 1px solid var(--yh-line);
+    > .yh-btn-sm {
+      align-self: flex-start;
+    }
+  }
+  .yh-transit-list .yh-rows-k {
+    min-width: 78px;
   }
   .yh-log-record {
     display: flex;
     flex-direction: column;
-    gap: 7px;
+    gap: 8px;
+    padding: 12px 13px;
+    @include surface;
   }
   .yh-log-meta {
     margin: 0;
-    @include faint;
+    font-family: var(--yh-mono);
+    @include faint($fs-2xs);
   }
   .yh-log-summary {
     margin: 0;
@@ -1156,7 +1262,7 @@ $dur: 0.15s;
     }
     &.yh-pre-error {
       color: var(--yh-seal);
-      border-color: var(--yh-seal-soft);
+      border-color: var(--yh-seal-line);
     }
   }
   .yh-console {
@@ -1180,7 +1286,7 @@ $dur: 0.15s;
     color: var(--yh-ink-faint);
   }
 
-  // ---- 设置(子页, 单栏; 每组之间一条细线, 不再套卡片) ----
+  // ---- 设置(子页, 单栏) ----
   .yh-set-stack,
   .yh-set-col {
     display: flex;
@@ -1210,9 +1316,8 @@ $dur: 0.15s;
     font-size: $fs-xs;
     color: var(--yh-ink-dim);
   }
-  // 输入框下面那行说明
   .yh-field-hint {
-    @include faint;
+    @include faint($fs-2xs);
   }
   .yh-field-pair {
     display: grid;
@@ -1225,7 +1330,7 @@ $dur: 0.15s;
     padding: 6px 10px;
     border-radius: $r-sm;
     border: 1px solid var(--yh-line-strong);
-    background: var(--yh-bg);
+    background: var(--yh-field);
     color: var(--yh-ink);
     outline: none;
     @include ease(border-color, box-shadow);
@@ -1253,6 +1358,10 @@ $dur: 0.15s;
       calc(100% - 10px) 55%;
     background-size: 5px 5px;
     background-repeat: no-repeat;
+    option {
+      background: var(--yh-panel);
+      color: var(--yh-ink);
+    }
   }
   .yh-key-row,
   .yh-preset-row {
@@ -1308,7 +1417,7 @@ $dur: 0.15s;
     margin-top: 1px;
     border-radius: $r-pill;
     background: var(--yh-line-strong);
-    transition: background $dur;
+    transition: background $dur $ease;
     &::after {
       content: '';
       position: absolute;
@@ -1318,7 +1427,7 @@ $dur: 0.15s;
       height: 16px;
       border-radius: 50%;
       background: var(--yh-knob);
-      transition: transform $dur ease-out;
+      transition: transform $dur $ease;
     }
   }
   .yh-toggle-text {
@@ -1326,15 +1435,17 @@ $dur: 0.15s;
     min-width: 0;
     em {
       display: block;
+      margin-top: 2px;
       font-style: normal;
-      @include faint;
+      @include faint($fs-2xs);
     }
   }
   .yh-about {
     margin: 0;
     padding-top: 12px;
     border-top: 1px solid var(--yh-line);
-    @include faint;
+    font-family: var(--yh-mono);
+    @include faint($fs-2xs);
   }
 
   // ---- 空状态 / 选区 / 滚动条 / 焦点 ----
@@ -1357,8 +1468,8 @@ $dur: 0.15s;
     background: var(--yh-accent-soft);
   }
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
   }
   ::-webkit-scrollbar-thumb {
     background: var(--yh-line-strong);
@@ -1404,16 +1515,16 @@ $dur: 0.15s;
   // ---- 动效: 只有面板入场、推进中的转圈 / 火苗 / 进度线; 系统要求减少动效时全部不放 ----
   @media (prefers-reduced-motion: no-preference) {
     .yh-panel {
-      animation: yh-panel-in 0.2s ease-out;
+      animation: yh-panel-in 0.22s $ease;
     }
     .yh-orb.is-updating::after {
-      animation: yh-spin 1.1s linear infinite;
+      animation: yh-spin 1.05s linear infinite;
     }
     .yh-orb.is-updating .yh-orb-mark {
-      animation: yh-flicker 1.4s ease-in-out infinite;
+      animation: yh-flicker 1.35s ease-in-out infinite;
     }
     .yh-panel.is-updating .yh-progress i {
-      animation: yh-slide 1.3s ease-in-out infinite;
+      animation: yh-slide 1.25s ease-in-out infinite;
     }
   }
   @keyframes yh-panel-in {
@@ -1438,7 +1549,7 @@ $dur: 0.15s;
       transform: scale(1);
     }
     50% {
-      opacity: 0.75;
+      opacity: 0.72;
       transform: scale(0.92, 0.96);
     }
   }

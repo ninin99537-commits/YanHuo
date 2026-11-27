@@ -45,6 +45,7 @@ export function 使用推进弹条(依赖: 推进弹条依赖, 宿主: 弹条宿
     el.style.setProperty(弹窗变量.border, 配色.border);
     el.style.setProperty(弹窗变量.text, 配色.text);
     el.style.setProperty(弹窗变量.accent, 配色.accent);
+    el.style.setProperty(弹窗变量.errorBorder, 配色.errorBorder);
   }
 
   /** 弹条贴着悬浮球左方弹出(左方空间不足则弹到右方), 垂直居中对齐球, 跟随球的位置 */
@@ -88,30 +89,32 @@ export function 使用推进弹条(依赖: 推进弹条依赖, 宿主: 弹条宿
   function 建() {
     const parentDoc = 宿主.parentWin.value?.document;
     if (!parentDoc || pillEl.value) return;
-    // v2.9.7 外观跟面板「简报」: 圆角胶囊 + 转圈 + 文案 + 计时 + 中断; 描边是强调色的淡色(不再整圈实色)
+    // 「长夜灯火」外观跟面板同源: 圆角胶囊 + 转圈 + 文案 + 等宽计时 + 中断; 描边取强调色半透
     const 强调 = `var(--yh-toast-accent,${弹窗兜底配色.accent})`;
     const 描边 = `var(--yh-toast-border,${弹窗兜底配色.border})`;
     const el = parentDoc.createElement('div');
     el.dataset.yhPill = '1';
     el.style.cssText =
-      'position:fixed;top:0;left:0;display:flex;align-items:center;gap:8px;height:34px;padding:0 6px 0 12px;border-radius:999px;' +
-      `background:var(--yh-toast-bg,${弹窗兜底配色.bg});border:1px solid color-mix(in srgb,${强调} 45%,transparent);color:var(--yh-toast-text,${弹窗兜底配色.text});` +
-      `font:13px/1.4 ${深色.sans};box-shadow:0 10px 28px rgba(0,0,0,.3);z-index:${层序.更新弹条};cursor:pointer;white-space:nowrap;transform-origin:left center;animation:yhPillIn .22s ease-out;`;
+      'position:fixed;top:0;left:0;display:flex;align-items:center;gap:8px;height:36px;padding:0 6px 0 13px;border-radius:999px;' +
+      `background:var(--yh-toast-bg,${弹窗兜底配色.bg});border:1px solid color-mix(in srgb,${强调} 42%,transparent);color:var(--yh-toast-text,${弹窗兜底配色.text});` +
+      `font:13px/1.4 ${深色.sans};box-shadow:0 12px 30px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,244,228,.08);z-index:${层序.更新弹条};cursor:pointer;white-space:nowrap;transform-origin:left center;animation:yhPillIn .22s cubic-bezier(.22,1,.36,1);`;
     const keyframes = parentDoc.createElement('style');
+    const 红 = `var(${弹窗变量.errorBorder},${弹窗兜底配色.errorBorder})`;
     keyframes.textContent =
       '@keyframes yhPillSpin{to{transform:rotate(360deg)}}@keyframes yhPillIn{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:none}}' +
+      `[data-yh-pill] button:hover{border-color:${红}!important;color:${红}!important;background:color-mix(in srgb,${红} 14%,transparent)!important}` +
       '@media (prefers-reduced-motion: reduce){[data-yh-pill],[data-yh-pill] *{animation:none!important}}';
     const spin = parentDoc.createElement('span');
-    spin.style.cssText = `width:12px;height:12px;border-radius:50%;border:2px solid ${描边};border-top-color:${强调};animation:yhPillSpin .9s linear infinite;flex:none;box-sizing:border-box;`;
+    spin.style.cssText = `width:13px;height:13px;border-radius:50%;border:2px solid ${描边};border-top-color:${强调};animation:yhPillSpin .9s linear infinite;flex:none;box-sizing:border-box;`;
     const text = parentDoc.createElement('span');
     text.textContent = 依赖.推进文案.value || '世界运转中…';
     const clock = parentDoc.createElement('span');
-    clock.style.cssText = 'opacity:.55;font-variant-numeric:tabular-nums;';
+    clock.style.cssText = `opacity:.58;font-family:${深色.mono};font-size:12px;font-variant-numeric:tabular-nums;`;
     clock.textContent = 计时文本();
     const btn = parentDoc.createElement('button');
     btn.textContent = '中断';
     btn.title = '中断本次推进, 不会写入任何数据';
-    btn.style.cssText = `height:24px;padding:0 10px;border-radius:999px;border:1px solid ${描边};background:transparent;color:inherit;cursor:pointer;font:500 12px ${深色.sans};`;
+    btn.style.cssText = `height:24px;padding:0 10px;border-radius:999px;border:1px solid ${描边};background:transparent;color:inherit;cursor:pointer;font:500 12px ${深色.sans};transition:border-color .15s,color .15s,background .15s;`;
     btn.addEventListener('click', ev => {
       ev.stopPropagation();
       依赖.中断推进();

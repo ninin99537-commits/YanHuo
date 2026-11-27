@@ -127,15 +127,29 @@ const 根样式 = computed(() => 取根变量(theme.value));
 const 子页 = ref<'logs' | 'settings' | null>(null);
 const scrollEl = ref<HTMLElement | null>(null);
 type 分区键 = 'now' | 'chronicle' | 'factions' | 'world';
+const 当前分区 = ref<分区键>('now');
 /** 跳到简报里的某一段(顶上那排按钮、"关联事件"之类的链接都走这里)。
  *  只滚面板自己的滚动区: scrollIntoView 在某些浏览器里会连带滚动酒馆页面, 不用它。 */
 function 跳到(键: 分区键) {
   子页.value = null;
+  当前分区.value = 键;
   nextTick(() => {
     const 盒 = scrollEl.value;
     const 段 = 盒?.querySelector<HTMLElement>(`[data-sec="${键}"]`);
     if (盒 && 段) 盒.scrollTo({ top: Math.max(0, 段.offsetTop - 6), behavior: 'smooth' });
   });
+}
+function 同步当前分区() {
+  if (子页.value !== null) return;
+  const 盒 = scrollEl.value;
+  if (!盒) return;
+  const 锚 = 盒.scrollTop + 28;
+  let 命中: 分区键 = 'now';
+  for (const 键 of ['now', 'chronicle', 'factions', 'world'] as const) {
+    const 段 = 盒.querySelector<HTMLElement>(`[data-sec="${键}"]`);
+    if (段 && 段.offsetTop <= 锚) 命中 = 键;
+  }
+  当前分区.value = 命中;
 }
 function 开子页(页: 'logs' | 'settings') {
   子页.value = 子页.value === 页 ? null : 页;
@@ -606,7 +620,15 @@ function toggleTrail(key: string) {
     >
       <header ref="headerEl" class="yh-header" @pointerdown="onPanelPointerDown">
         <div class="yh-bar">
-          <span class="yh-brand-name">烟火</span>
+          <span class="yh-brand">
+            <svg class="yh-brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                class="yh-flame"
+                d="M12 2.8c.6 3 3.9 4.9 4.9 8.4 1 3.7-1.5 8-4.9 8s-5.9-2.8-5.4-6.3c.3-2 1.6-3.2 2.4-4.6.3 1.3.9 2.1 1.8 2.5-.5-3 .1-5.6 1.2-8Z"
+              />
+            </svg>
+            <span class="yh-brand-name">烟火</span>
+          </span>
           <span v-if="updatingActive" class="yh-status is-running">
             <i class="yh-status-dot" aria-hidden="true"></i>
             {{ updatingMessage || '正在推进' }}
@@ -655,13 +677,19 @@ function toggleTrail(key: string) {
           <PhCaretLeft :size="13" weight="bold" />{{ 子页 === 'logs' ? '日志' : '设置' }}
         </button>
         <template v-else>
-          <button v-for="分 in 分区" :key="分.键" class="yh-jump-item" @click="跳到(分.键)">
+          <button
+            v-for="分 in 分区"
+            :key="分.键"
+            class="yh-jump-item"
+            :class="{ 'is-active': 当前分区 === 分.键 }"
+            @click="跳到(分.键)"
+          >
             {{ 分.名 }}<span v-if="分.数" class="yh-jump-n">{{ 分.数 }}</span>
           </button>
         </template>
       </nav>
 
-      <div ref="scrollEl" class="yh-body">
+      <div ref="scrollEl" class="yh-body" @scroll.passive="同步当前分区">
           <!-- ============ 日志 ============ -->
           <div v-if="子页 === 'logs'" class="yh-page yh-page-logs">
             <div class="yh-log-left">
@@ -1096,9 +1124,11 @@ function toggleTrail(key: string) {
           <div v-else class="yh-page yh-brief">
           <!-- ============ 此刻 ============ -->
           <section class="yh-sec" data-sec="now">
-            <p v-if="world.世界.氛围" class="yh-now-mood">{{ world.世界.氛围 }}</p>
-            <p v-if="world.世界.总览" class="yh-now-trend">{{ world.世界.总览 }}</p>
-            <p v-if="节奏行" class="yh-now-pace">{{ 节奏行 }}</p>
+            <div v-if="world.世界.氛围 || world.世界.总览 || 节奏行" class="yh-mood-quote">
+              <p v-if="world.世界.氛围" class="yh-now-mood">{{ world.世界.氛围 }}</p>
+              <p v-if="world.世界.总览" class="yh-now-trend">{{ world.世界.总览 }}</p>
+              <p v-if="节奏行" class="yh-now-pace">{{ 节奏行 }}</p>
+            </div>
             <p v-if="!hasWorld" class="yh-now-empty">
               世界尚无档案——生成一条 AI 回复后自动建立；或在设置里配好接口后点下方「推进」。
             </p>

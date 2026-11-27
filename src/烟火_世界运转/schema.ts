@@ -53,6 +53,8 @@ export const SettingsSchema = z
           .transform(value => Math.max(1, Math.min(20, Math.round(value)))),
         /** 把世界动向写入世界书的常驻条目(蓝灯常开), 主 AI 与彼方每回合都能读到 */
         注入世界书条目: z.boolean().default(true),
+        /** 拆分绿灯条目: 把未进简报的组织与非所在地地区写成关键词触发的绿灯条目(平时 0 token) */
+        拆分绿灯条目: z.boolean().default(true),
         /** 写入目标世界书: 单聊默认角色卡主世界书; 群聊或想每场聊天完全隔离时选「聊天世界书」 */
         世界书写入目标: z.enum(['角色卡主世界书', '聊天世界书']).default('角色卡主世界书'),
         // 2026-11-22 删除 迫近闯入(@deprecated, 引擎早已不用): z.object 解析时会丢掉旧设置里残留的这个键, 不报错
@@ -199,6 +201,8 @@ export interface WorldRegion {
   主事方: string;
   /** 外部关系: 与周边地区/组织的关系 */
   外部关系: string;
+  /** 邻近地区(可选): 显式连通的邻近地区名列表(顿号/逗号分隔), 优先于外部关系文本匹配 */
+  邻近地区?: string;
   /** 背景: 演变因果(怎么走到今天), 不复述概况 */
   背景: string;
 }

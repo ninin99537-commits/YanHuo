@@ -33,9 +33,9 @@ import { 传讯速度表, type 传讯速度 } from './schema';
 import { 设传讯速度 } from './保存世界状态';
 import { 取节奏 } from './节奏';
 import { 解析日期 } from './时间校验';
-import { 取近期日程, 取数据变化, 构建公开摘要, 相对日 } from './公开摘要';
+import { 取近期日程, 取天时氛围, 取数据变化, 构建公开摘要, 相对日 } from './公开摘要';
 import { getSettings, useSettingsStore } from './settings';
-import { UI_KEY, useConsoleStore, useDebugStore, useStateStore, useUpdatingStore } from './state';
+import { UI_KEY, useConsoleStore, useDebugStore, useDiffStore, useStateStore, useUpdatingStore } from './state';
 import { useHost } from './host';
 import { setToastAnchor, setToastColors, setToastSuppressed, toastError, toastInfo, toastSuccess, toastWarning } from './toast';
 import { updateWorld } from './update';
@@ -44,7 +44,7 @@ import { 事件枚举, 取层, 表单定义 } from './世界字段表';
 import type { 任意编辑会话, 事件编辑会话, 组织编辑会话, 条目编辑会话, 概述编辑会话 } from './世界编辑会话';
 import { 取消会话, 打开事件会话, 打开组织会话, 打开概述会话, 打开条目会话, 提交会话 } from './世界编辑会话';
 import type { 世界条目层 } from './世界数据变更';
-import { 建世界数据环境, 清空世界, 移除事件, 移除组织, 移除世界条目 } from './世界数据变更';
+import { 建世界数据环境, 导出初始世界模板, 导入初始世界模板, 清空世界, 移除事件, 移除组织, 移除世界条目 } from './世界数据变更';
 // 面板里与渲染无关的规则(筛事件 / 两段日志文本)收在 面板动作.ts, 视图只做绑定
 import { 筛事件, 构建推进记录, 构建报错报告 } from './面板动作';
 // 列表类设置的文本 → 名单: 三家统一按换行切(逗号/顿号不再当分隔符)
@@ -68,6 +68,8 @@ const { lines: consoleLines } = storeToRefs(consoleStore);
 const consoleLinesReversed = computed(() => [...consoleLines.value].reverse());
 const updatingStore = useUpdatingStore();
 const { active: updatingActive, message: updatingMessage } = storeToRefs(updatingStore);
+const diffStore = useDiffStore();
+const { 新增事件: diff新增事件, 变更事件: diff变更事件, 变更组织: diff变更组织, 变更地区: diff变更地区 } = storeToRefs(diffStore);
 
 // ---------------------------------------------------------------------------
 // 面板机制(位置偏好 / 主题 / iframe 尺寸 / 拖动 / 阴影)全在 ../共用/面板机制.ts, 推进中弹条在 推进弹条.ts;
@@ -178,6 +180,7 @@ const seedList = computed(() => world.value.暗线 ?? []);
 const occasionList = computed(() => world.value.日程 ?? []);
 const metricEntries = computed(() => Object.entries(world.value.指标 ?? {}));
 const 主角所在 = computed(() => String(world.value.世界.主角所在 ?? '').trim());
+const 天时 = computed(() => 取天时氛围(world.value.世界.时间));
 /** 所在地: 主角所在正好是某个地区名才有(和注入里的【所在地】同一口径) */
 const 所在地 = computed(() => {
   const 地区 = 主角所在.value ? world.value.地区?.[主角所在.value] : undefined;
@@ -201,7 +204,7 @@ const 分区 = computed<{ 键: 分区键; 名: string; 数: number | null }[]>((
 // 字段清单(名字/标签/枚举/多行)只在 世界字段表.ts 一处(候选 4): 这里按层取, 不再手抄字段名。
 type WorldLayer = 世界条目层;
 const layerFields: Record<WorldLayer, { key: string; label: string; enum?: readonly string[]; multiline?: boolean }[]> = {
-  地区: 表单定义(取层('地区')),
+  地区: [...表单定义(取层('地区')), { key: '邻近地区', label: '邻近地区（顿号分隔）' }],
   形势: 表单定义(取层('形势')),
   暗线: 表单定义(取层('暗线')),
   日程: 表单定义(取层('日程')),
@@ -290,13 +293,63 @@ function fmtTimestamp(timestamp?: number): string {
 
 /** 切换「启用世界运转」/「注入世界动向到主AI」/「写入世界书」/「传播时滞」时立即生效 */
 watch(
-  () => [settings.value.启用运转, settings.value.运转.注入世界书条目, settings.value.运转.世界书写入目标, settings.value.运转.传播时滞],
+  () => [settings.value.启用运转, settings.value.运转.注入世界书条目, settings.value.运转.拆分绿灯条目, settings.value.运转.世界书写入目标, settings.value.运转.传播时滞],
   ([启用运转, 注入]) => {
     syncWorldbookEntry(stateStore.data, !!(启用运转 && 注入), settings.value).catch(error => {
       console.error('[烟火] 切换注入开关后同步世界书条目失败:', error);
     });
   },
 );
+
+function 拆邻近地区(文本?: string): string[] {
+  return String(文本 ?? '').split(/[、,，/；;\s]+/).map(s => s.trim()).filter(Boolean);
+}
+
+function 跳转地区(目标名: string) {
+  子页.value = null;
+  当前分区.value = 'world';
+  nextTick(() => {
+    const 盒 = scrollEl.value;
+    const 卡片 = 盒?.querySelector<HTMLElement>(`[data-region="${CSS.escape(目标名)}"]`);
+    if (盒 && 卡片) {
+      const 折叠 = 卡片.closest('details');
+      if (折叠) 折叠.open = true;
+      nextTick(() => 盒.scrollTo({ top: Math.max(0, 卡片.offsetTop - 10), behavior: 'smooth' }));
+    } else {
+      toastInfo(`未找到地区「${目标名}」的档案`, '烟火');
+    }
+  });
+}
+
+const 显示模板导入 = ref(false);
+const 模板导入草稿 = ref('');
+
+async function 导出模板到剪贴板() {
+  if (!hasWorld.value) {
+    toastWarning('当前尚无世界档案可导出', '烟火');
+    return;
+  }
+  const 文本 = 导出初始世界模板(world.value);
+  try {
+    await navigator.clipboard.writeText(文本);
+    toastSuccess('已复制初始世界模板 JSON 到剪贴板', '烟火');
+  } catch {
+    模板导入草稿.value = 文本;
+    显示模板导入.value = true;
+    toastInfo('已将模板填入下方文本框，请手动全选复制', '烟火');
+  }
+}
+
+function 确认导入模板() {
+  const 结果 = 导入初始世界模板(模板导入草稿.value, 建世界数据环境(), world.value);
+  if (结果.拒绝) {
+    toastWarning(结果.拒绝, '烟火');
+    return;
+  }
+  显示模板导入.value = false;
+  模板导入草稿.value = '';
+  toastSuccess(结果.说明, '烟火');
+}
 
 /** 本聊天的传讯速度(v2.9.2): 存在聊天变量里(不是全局设置), 改完重读数据并刷新世界书条目 */
 const 传讯速度说明: Record<传讯速度, string> = {
@@ -663,7 +716,15 @@ function toggleTrail(key: string) {
           <button class="yh-icon-btn" title="收起" @click="closePanel"><PhX :size="16" weight="regular" /></button>
         </div>
         <div class="yh-hero">
-          <strong class="yh-time-value" :class="{ 'is-long': 时间显示.大.length > 7 }">{{ 时间显示.大 }}</strong>
+          <div class="yh-time-row">
+            <strong class="yh-time-value" :class="{ 'is-long': 时间显示.大.length > 7 }">{{ 时间显示.大 }}</strong>
+            <span v-if="天时" class="yh-ambient" :title="`当前时令：${天时.标签}`">
+              <PhSun v-if="天时.图标 === 'sun'" :size="12" weight="regular" />
+              <PhMoonStars v-else-if="天时.图标 === 'moon'" :size="12" weight="regular" />
+              <PhWind v-else :size="12" weight="regular" />
+              {{ 天时.标签 }}
+            </span>
+          </div>
           <span v-if="时间显示.小" class="yh-time-sub">{{ 时间显示.小 }}</span>
           <p v-if="world.世界.主角所在" class="yh-where">
             <PhMapPin :size="13" weight="bold" />主角所在 · {{ world.世界.主角所在 }}
@@ -1050,6 +1111,13 @@ function toggleTrail(key: string) {
                     >
                   </label>
                   <label class="yh-toggle">
+                    <input v-model="settings.运转.拆分绿灯条目" type="checkbox" />
+                    <span class="yh-toggle-track"></span>
+                    <span class="yh-toggle-text"
+                      >拆分绿灯档案条目<em>将未进简报的组织与非所在地地区写成关键词触发的绿灯条目（平时 0 token）</em></span
+                    >
+                  </label>
+                  <label class="yh-toggle">
                     <input v-model="settings.运转.注入保密事件" type="checkbox" />
                     <span class="yh-toggle-track"></span>
                     <span class="yh-toggle-text"
@@ -1111,6 +1179,31 @@ function toggleTrail(key: string) {
                     <span class="yh-field-label">标签列表（每行一条）</span>
                     <textarea v-model="tagListText" class="yh-input yh-textarea" rows="3" placeholder="如&#10;thinking&#10;aftertalk"></textarea>
                   </label>
+                </div>
+              </div>
+              <div class="yh-set-col">
+                <h3 class="yh-col-title">开局世界模板</h3>
+                <div class="yh-tpl-actions">
+                  <button class="yh-btn yh-btn-sm" @click="导出模板到剪贴板">
+                    <PhCopySimple :size="12" weight="regular" />导出当前为模板
+                  </button>
+                  <button class="yh-btn yh-btn-sm" @click="显示模板导入 = !显示模板导入">
+                    {{ 显示模板导入 ? '收起导入框' : '导入开局模板' }}
+                  </button>
+                </div>
+                <div v-if="显示模板导入" class="yh-tpl-box">
+                  <textarea
+                    v-model="模板导入草稿"
+                    class="yh-input yh-textarea"
+                    rows="4"
+                    placeholder="粘贴初始世界模板 JSON，导入后将作为本聊天的初始世界快照并同步世界书"
+                  ></textarea>
+                  <div class="yh-edit-actions">
+                    <button class="yh-btn yh-btn-primary yh-btn-sm" @click="确认导入模板">
+                      <PhCheck :size="12" weight="bold" />确认导入
+                    </button>
+                    <button class="yh-btn yh-btn-sm" @click="显示模板导入 = false">取消</button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1331,6 +1424,8 @@ function toggleTrail(key: string) {
                     </div>
                     <div class="yh-feed-head">
                       <strong class="yh-feed-title">{{ event.标题 }}</strong>
+                      <span v-if="diff新增事件.has(event.id)" class="yh-diff-badge is-new" title="本轮新增">新</span>
+                      <span v-else-if="diff变更事件.has(event.id)" class="yh-diff-badge" title="本轮更新">变</span>
                       <button class="yh-icon-btn yh-feed-edit" title="编辑此事件" @click="startEditEvent(event)">
                         <PhPencilSimple :size="13" weight="regular" />
                       </button>
@@ -1390,7 +1485,7 @@ function toggleTrail(key: string) {
                 :class="{ 'is-active': selectedFaction === name }"
                 @click="selectedFaction = name"
               >
-                {{ name }}
+                {{ name }}<span v-if="diff变更组织.has(name)" class="yh-diff-dot" title="本轮有更新"></span>
               </button>
             </div>
             <div v-else class="yh-empty yh-empty-slim">
@@ -1563,9 +1658,10 @@ function toggleTrail(key: string) {
                   @cancel="取消编辑()"
                 />
                 <ul v-if="regionEntries.length > 0" class="yh-world-list">
-                  <li v-for="[name, r] in regionEntries" :key="name" class="yh-world-card">
+                  <li v-for="[name, r] in regionEntries" :key="name" :data-region="name" class="yh-world-card">
                     <div class="yh-world-card-head">
                       <strong>{{ name }}</strong>
+                      <span v-if="diff变更地区.has(name)" class="yh-diff-dot" title="本轮有更新"></span>
                       <span v-if="r.主事方" class="yh-world-delta">{{ r.主事方 }}</span>
                       <div class="yh-world-card-actions">
                         <button class="yh-world-act" @click="startWorldEdit('地区', name)">
@@ -1585,6 +1681,20 @@ function toggleTrail(key: string) {
                       <div v-if="r.外部关系">
                         <dt>外部关系</dt>
                         <dd>{{ r.外部关系 }}</dd>
+                      </div>
+                      <div v-if="r.邻近地区">
+                        <dt>邻近地区</dt>
+                        <dd class="yh-region-links">
+                          <button
+                            v-for="邻 in 拆邻近地区(r.邻近地区)"
+                            :key="邻"
+                            type="button"
+                            class="yh-region-chip"
+                            @click="跳转地区(邻)"
+                          >
+                            {{ 邻 }}
+                          </button>
+                        </dd>
                       </div>
                       <div v-if="r.背景">
                         <dt>背景</dt>

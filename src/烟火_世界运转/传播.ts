@@ -46,9 +46,15 @@ export function 判地缘(event: Pick<WorldEvent, '地点'>, data: Pick<WorldDat
   const 地区表 = data.地区 ?? {};
   const 事件地区 = 归到地区(地点, Object.keys(地区表));
   if (事件地区 && 事件地区 === 主角所在) return '本地';
+  const 目标名 = 事件地区 ?? 地点;
+  const 拆分邻近 = (值: unknown): string[] =>
+    String(值 ?? '').split(/[、,，/；;\s]+/).map(s => s.trim()).filter(Boolean);
+  const 所在地邻近 = 拆分邻近(地区表[主角所在]?.邻近地区);
+  if (所在地邻近.includes(目标名)) return '邻近';
+  if (事件地区 && 拆分邻近(地区表[事件地区]?.邻近地区).includes(主角所在)) return '邻近';
   const 所在地关系 = String(地区表[主角所在]?.外部关系 ?? '').trim();
-  if (!所在地关系) return '邻近';
-  if (所在地关系.includes(事件地区 ?? 地点)) return '邻近';
+  if (!所在地关系 && 所在地邻近.length === 0) return '邻近';
+  if (所在地关系.includes(目标名)) return '邻近';
   if (事件地区 && String(地区表[事件地区]?.外部关系 ?? '').includes(主角所在)) return '邻近';
   return '远方';
 }

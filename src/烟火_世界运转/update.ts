@@ -2,7 +2,7 @@ import { klona } from 'klona';
 import { chatCompletion, maskBaseUrl } from './api';
 import { buildTickMessages } from './prompts';
 import { getFreshSettings, getSettings } from './settings';
-import { useDebugStore, useStateStore, useUpdatingStore } from './state';
+import { useDebugStore, useDiffStore, useStateStore, useUpdatingStore } from './state';
 import { 世界状态存档, 绑定楼层, 归属仍有效, type 楼层归属 } from './保存世界状态';
 import { getActiveWorldbookBundle } from './worldbook-read';
 import { useHost } from './host';
@@ -175,6 +175,7 @@ export async function updateWorld(force = false): Promise<推进结果> {
     if (!commit.落盘) throw Error(commit.说明);
     committed = true;
     store.data = commit.数据;
+    useDiffStore().record(data, commit.数据);
     const diff = 事件账目(data.事件, commit.数据.事件);
     debug.record({ addedEvents: diff.added, updatedEvents: diff.updated, removedEvents: diff.removed, summary: commit.数据.小结,
       备注: [...(debug.log?.备注 ?? notes), ...(candidate.维护备注 ?? [])], 提交状态: '快照已提交', 请求统计: {次数: result.请求次数, 毫秒: result.请求耗时} });

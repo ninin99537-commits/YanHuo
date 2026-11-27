@@ -293,6 +293,10 @@ export function validateAndNormalize(原载荷: any, oldData: WorldData, 时间�
     factions[name] = 沿用条目(factionLayer, raw, (oldData.组织?.[name] as unknown as Record<string, unknown>)) as unknown as WorldFaction;
   }
   const regions = normalizeLayer(parsed.地区, oldData.地区 ?? {}, 取层('地区').容量, 内容字段键(取层('地区')));
+  for (const [name, oldReg] of Object.entries(oldData.地区 ?? {})) {
+    const 邻近 = String((parsed.地区?.[name] as any)?.邻近地区 ?? oldReg?.邻近地区 ?? '').trim();
+    if (邻近 && regions[name]) regions[name].邻近地区 = 邻近;
+  }
   const trends = options.运转?.世界形势 === false
     ? (oldData.形势 ?? {})
     : normalizeLayer(parsed.形势, oldData.形势 ?? {}, 取层('形势').容量, 内容字段键(取层('形势')));

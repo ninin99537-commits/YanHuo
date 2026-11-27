@@ -301,7 +301,7 @@ function 重建暗线(列表: unknown[]): WorldSeed[] {
 }
 
 /** 把一份楼层快照(可能是旧格式)按当前结构重建: 旧字段名迁移、废弃字段丢弃、缺字段补缺省; 归档引用按池解开 */
-function sanitizeSnapshot(原快照: Record<string, any>, 池: 归档池 = {}): WorldData {
+export function sanitizeSnapshot(原快照: Record<string, any>, 池: 归档池 = {}): WorldData {
   // v2.10.1: 旧层名/旧字段名先搬到新名下(条目里的字段另有 字段表 的 旧名 兜底, 归档池里解出来的条目也走那条)
   const snapshot = 迁移旧键名(原快照);
   const data = emptyData();
@@ -338,7 +338,12 @@ function sanitizeSnapshot(原快照: Record<string, any>, 池: 归档池 = {}): 
   }
   if (snapshot.地区 && typeof snapshot.地区 === 'object' && !Array.isArray(snapshot.地区)) {
     for (const [name, region] of Object.entries(snapshot.地区) as [string, Record<string, unknown>][]) {
-      if (region && typeof region === 'object') data.地区[name] = 规范化条目<WorldRegion>(取层('地区'), region);
+      if (region && typeof region === 'object') {
+        const 条 = 规范化条目<WorldRegion>(取层('地区'), region);
+        const 邻近 = typeof region.邻近地区 === 'string' ? region.邻近地区.trim() : '';
+        if (邻近) 条.邻近地区 = 邻近;
+        data.地区[name] = 条;
+      }
     }
   }
   if (snapshot.形势 && typeof snapshot.形势 === 'object' && !Array.isArray(snapshot.形势)) {

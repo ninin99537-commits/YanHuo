@@ -1561,4 +1561,79 @@ $ease: cubic-bezier(0.22, 1, 0.36, 1);
       left: 100%;
     }
   }
+
+  // ---- 天时微标 / Diff 徽标 / 邻近胶囊 / 开局模板 ----
+  .yh-time-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .yh-ambient {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: $fs-xs;
+    color: var(--yh-ink-dim);
+    font-weight: $fw-regular;
+  }
+  .yh-diff-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 5px;
+    height: 16px;
+    border-radius: $r-xs;
+    font-size: $fs-2xs;
+    font-weight: $fw-semibold;
+    background: var(--yh-accent-soft);
+    color: var(--yh-accent);
+    border: 1px solid var(--yh-accent-line);
+    flex: none;
+    &.is-new {
+      background: var(--yh-accent);
+      color: var(--yh-on-accent);
+      border-color: transparent;
+    }
+  }
+  .yh-diff-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--yh-accent);
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+  .yh-region-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 2px;
+  }
+  .yh-region-chip {
+    padding: 1px 8px;
+    border-radius: $r-pill;
+    border: 1px solid var(--yh-line-strong);
+    background: var(--yh-raise);
+    color: var(--yh-ink-dim);
+    font-size: $fs-xs;
+    cursor: pointer;
+    @include ease(background, color, border-color);
+    &:hover {
+      background: var(--yh-accent-soft);
+      color: var(--yh-accent);
+      border-color: var(--yh-accent-line);
+    }
+  }
+  .yh-tpl-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .yh-tpl-box {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+  }
 }

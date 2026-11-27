@@ -1,9 +1,10 @@
+import { parse as parseJson5 } from 'json5';
 import type { WorldData, WorldEvent, WorldFaction } from './schema';
 import { EVENT_STAGE } from './schema';
 import { getSettings } from './settings';
-import { clearAllData, emptyData, saveData, useStateStore } from './state';
+import { clearAllData, emptyData, saveData, useDiffStore, useStateStore } from './state';
 import { syncWorldbookEntry } from './inject';
-import { 世界状态存档 } from './保存世界状态';
+import { 世界状态存档, sanitizeSnapshot } from './保存世界状态';
 import { toastWarning } from './toast';
 import { pickEnum, 签事件id, 有世界数据 } from './世界数据';
 import type { 世界条目层, 世界层定义 } from './世界字段表';
@@ -188,6 +189,10 @@ export function 保存世界条目(
     // 枚举字段(指标的「趋势」)按表纠偏, 其余去首尾空白——与 AI 那条路同一把尺
     const 新条目: Record<string, string> = {};
     for (const f of 内容字段(定义)) 新条目[f.键] = 字段值(f, 字段[f.键]);
+    if (层 === '地区') {
+      const 邻近 = 文本(字段.邻近地区);
+      if (邻近) 新条目.邻近地区 = 邻近;
+    }
     if (旧名 && 旧名 !== 目标名) delete 表[旧名];
     表[目标名] = 新条目;
     return 落盘并同步({ ...数据, [层]: 表 } as WorldData, 环境, `已保存${层}「${目标名}」, 注入内容已同步`);
@@ -339,7 +344,54 @@ export function 移除组织(数据: WorldData, 名: string, 环境: 世界数�
  *  生产环境的 清空 已经把空数据提交给界面(ADR-0002), 这里用返回的那一份; 测试里的假环境返回 void 时自己造。 */
 export function 清空世界(环境: 世界数据环境): 变更返回 {
   const 提交的 = 环境.清空();
+  try { useDiffStore().clear(); } catch { /* 测试里可能未挂 pinia */ }
   const 空数据 = 提交的 ?? emptyData();
   同步世界书(空数据, 环境);
   return { 数据: 空数据, 说明: '世界已归零: 快照清空, 世界书条目已删除, 之后只推进新楼层' };
+}
+
+/** 导出纯净的初始世界模板 JSON（剥离聊天绑定、楼层计数与运行态粘性字段，供作者随角色卡分发） */
+export function 导出初始世界模板(数据: WorldData): string {
+  const 模板 = {
+    烟火模板版本: 1,
+    世界: 数据.世界,
+    地区: 数据.地区 ?? {},
+    形势: 数据.形势 ?? {},
+    暗线: 数据.暗线 ?? [],
+    日程: 数据.日程 ?? [],
+    指标: 数据.指标 ?? {},
+    组织: 数据.组织 ?? {},
+    事件: (数据.事件 ?? []).map(({ 判定: _drop, ...rest }) => rest),
+  };
+  return JSON.stringify(模板, null, 2);
+}
+
+/** 从初始世界模板 JSON 导入并落盘同步到当前聊天 */
+export function 导入初始世界模板(文本内容: string, 环境: 世界数据环境, 当前数据: WorldData): 变更返回 {
+  const 原文 = String(文本内容 ?? '').trim();
+  if (!原文) return 拒绝(当前数据, '请先粘贴初始世界模板 JSON');
+  let 解析: unknown;
+  try {
+    解析 = parseJson5(原文);
+  } catch (error) {
+    return 拒绝(当前数据, `模板 JSON 解析失败：${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!解析 || typeof 解析 !== 'object' || Array.isArray(解析)) {
+    return 拒绝(当前数据, '模板格式不正确：顶层必须是对象');
+  }
+  const 规范 = sanitizeSnapshot(解析);
+  if (!有世界数据(规范)) {
+    return 拒绝(当前数据, '模板里没有有效的世界档案数据');
+  }
+  const 新数据: WorldData = {
+    ...规范,
+    事件: 规范.事件.map(e => ({ ...e, id: e.id || 签事件id() })),
+    已结束: [],
+    已失效暗线: [],
+    已过期日程: [],
+    小结: '',
+    统计: { 推进次数: 0, 最后推进: 0 },
+  };
+  try { useDiffStore().clear(); } catch { /* 测试里可能未挂 pinia */ }
+  return 落盘并同步(新数据, 环境, '已导入初始世界模板');
 }

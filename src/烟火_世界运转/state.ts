@@ -189,3 +189,60 @@ export const useUpdatingStore = defineStore('yanhuo-updating', () => {
   return { active, message, start, cancel, stop };
 });
 
+/** 本轮推进变更标记(内存态, 供简报面板高亮「新 / 变」徽标, 零存档开销) */
+export const useDiffStore = defineStore('yanhuo-diff', () => {
+  const 新增事件 = ref<Set<string>>(new Set());
+  const 变更事件 = ref<Set<string>>(new Set());
+  const 变更组织 = ref<Set<string>>(new Set());
+  const 变更地区 = ref<Set<string>>(new Set());
+
+  function record(前: WorldData, 后: WorldData) {
+    const 旧事件 = new Map((前.事件 ?? []).map(e => [e.id, e]));
+    const 新建 = new Set<string>();
+    const 变动 = new Set<string>();
+    for (const e of 后.事件 ?? []) {
+      const 旧 = 旧事件.get(e.id);
+      if (!旧) {
+        if (e.id) 新建.add(e.id);
+      } else if (
+        旧.阶段 !== e.阶段
+        || 旧.描述 !== e.描述
+        || 旧.时间 !== e.时间
+        || (旧.演变?.length ?? 0) !== (e.演变?.length ?? 0)
+      ) {
+        if (e.id) 变动.add(e.id);
+      }
+    }
+    const 旧已结束 = new Set((前.已结束 ?? []).map(e => e.id));
+    for (const e of 后.已结束 ?? []) {
+      if (e.id && !旧已结束.has(e.id)) 变动.add(e.id);
+    }
+
+    const 变组织 = new Set<string>();
+    for (const [名, 值] of Object.entries(后.组织 ?? {})) {
+      const 旧 = 前.组织?.[名];
+      if (!旧 || JSON.stringify(旧) !== JSON.stringify(值)) 变组织.add(名);
+    }
+
+    const 变地区 = new Set<string>();
+    for (const [名, 值] of Object.entries(后.地区 ?? {})) {
+      const 旧 = 前.地区?.[名];
+      if (!旧 || JSON.stringify(旧) !== JSON.stringify(值)) 变地区.add(名);
+    }
+
+    新增事件.value = 新建;
+    变更事件.value = 变动;
+    变更组织.value = 变组织;
+    变更地区.value = 变地区;
+  }
+
+  function clear() {
+    新增事件.value = new Set();
+    变更事件.value = new Set();
+    变更组织.value = new Set();
+    变更地区.value = new Set();
+  }
+
+  return { 新增事件, 变更事件, 变更组织, 变更地区, record, clear };
+});
+

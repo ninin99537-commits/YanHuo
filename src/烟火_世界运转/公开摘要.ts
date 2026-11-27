@@ -267,7 +267,7 @@ export function 构建公开摘要(data: WorldData, settings: Settings, 选项: 
   const selectedSet = new Set(selectedIds);
   const omittedIds = candidates.filter(e => !selectedSet.has(事件键(e))).map(事件键);
 
-  // 已结束的公开结果也按"整条选择"计入预算：旧记录会长期累积，不能每轮把全部历史都注入。
+  // 已结束的公开结果蓝绿分流：蓝灯只常驻最近 7 世界日内、最多 2 条新鲜结局，8~30 日或超额的留给绿灯「往事」按需激活。
   const 保留条数 = Math.max(1, policy.公开摘要);
   const 公开了结 = (data.已结束 ?? []).filter(event => event.公开性 === '公开' && event.结束原因
     && (!判定.生效 || (闻(event).到达 && 闻(event).最新)));
@@ -275,18 +275,41 @@ export function 构建公开摘要(data: WorldData, settings: Settings, 选项: 
     const 天 = 距今天数(event.时间, 今);
     return 天 == null || 天 <= 了结注入窗口天数;
   });
-  const 最近了结 = 窗口内.slice(-保留条数);
+  const 蓝灯了结 = 窗口内.filter(event => {
+    const 天 = 距今天数(event.时间, 今);
+    return 天 == null || 天 <= 7;
+  });
+  const 最近了结 = 蓝灯了结.slice(-Math.min(2, 保留条数));
   const 了结Ids = 最近了结.map(事件键);
 
   const lines = [
     '[烟火 · 世界动向]',
-    '以下为已记录的世界公共事实。角色只能通过合理渠道得知，不许全知，不要大段播报。',
+    '以下为世界公共动态。角色只能通过耳闻、告示、传言等合理渠道自然得知并议论，不可凭空全知，也不要生硬地大段播报。',
     ...(判定.生效 ? ['标"传言"的说法可能走样；标"约N天前的消息"的是所在地最近听到的，远方此刻可能已经变了。'] : []),
     `世界时间：${data.世界.时间 || '未知'}${主角所在 ? ` ｜ 主角所在：${主角所在}` : ''}`,
   ];
   // v2.9.1 三段当地人看得见的东西: 所在地 / 近期日程 / 数据变化(各自有条件, 没有就整段不出)
   for (const 段 of [所在地段(data, 主角所在), 近期日程段(data, settings, 今, 主角所在), 数据变化段(data, settings, 主角所在)]) {
     if (段) lines.push(段);
+  }
+  const 地区列表 = Object.entries(data.地区 ?? {}).filter(([名]) => {
+    const 键 = 名.trim();
+    return 键.length > 0 && 键 !== 主角所在;
+  });
+  if (地区列表.length > 0) {
+    // 蓝灯只放「非所在地地区名：一句话概况」作地图索引，详情留给绿灯按需触发
+    lines.push('【已知地区】\n' + 地区列表.map(([名, 地区]) => {
+      const 概况 = String(地区?.概况 ?? '').trim();
+      return 概况 ? `- ${名}：${概况}` : `- ${名}`;
+    }).join('\n'));
+  }
+  const 组织列表 = Object.entries(data.组织 ?? {}).filter(([名]) => 名.trim().length > 0);
+  if (组织列表.length > 0) {
+    // 蓝灯只放「组织名：公开目标」作为目录索引，让主 AI 知道有哪些组织可提及以触发绿灯；动向/外部关系/背景绝不进蓝灯
+    lines.push('【已知组织】\n' + 组织列表.map(([名, 组织]) => {
+      const 目标 = String(组织?.目标 ?? '').trim();
+      return 目标 ? `- ${名}：${目标}` : `- ${名}`;
+    }).join('\n'));
   }
   if (selected.length || 最近了结.length) lines.push('【动态】');
   for (const event of selected) {
@@ -308,4 +331,159 @@ export function 构建公开摘要(data: WorldData, settings: Settings, 选项: 
   const text = lines.join('\n\n');
   return { text, selectedIds, omittedIds, 了结Ids, characters: text.length, targetCharacters: policy.摘要目标字符, overTarget: text.length > policy.摘要目标字符,
     传播: { 生效: 判定.生效, 说明: 判定.说明 }, 在途 };
+}
+
+export interface 绿灯条目 {
+  角色: '组织' | '地区' | '事态' | '往事';
+  键: string;
+  关键词: string[];
+  内容: string;
+}
+
+const 关键词占位词 = new Set(['未知', '不详', '不明', '无', '暂无', '待定', '无名', '佚名']);
+
+/** 从负责人/代表人物字符串（如"家主·林远山、副手·陈默"）里提取可读的关键词，过滤占位词 */
+function 提取负责人关键词(负责人: string): string[] {
+  const 词们: string[] = [];
+  for (const 段 of String(负责人 ?? '').split(/[、,，/；;]+/)) {
+    const 整 = 段.trim();
+    if (!整 || 关键词占位词.has(整)) continue;
+    if (整.length >= 2) 词们.push(整);
+    const 尾 = 整.split(/[·・:：]/).pop()?.trim() ?? '';
+    if (尾.length >= 2 && 尾 !== 整 && !关键词占位词.has(尾)) 词们.push(尾);
+  }
+  return 词们;
+}
+
+/**
+ * 构建按关键词触发的绿灯条目（平时 0 token，正文提及才激活）:
+ * - 组织：仅注入公开安全字段（目标/负责人/覆盖范围/外部关系），绝不透传「动向」与「背景」；
+ * - 地区：仅注入非主角所在地的地区（所在地已在蓝灯【所在地】里），使用地区公开字段；
+ * - 事态：未入选蓝灯【动态】的其余已到达公开进行中事件（不含保密事件与在途未到事件）。
+ */
+export function 构建绿灯条目(
+  data: WorldData,
+  settings: Settings,
+  主角所在?: string,
+  落选事件键?: readonly string[],
+  蓝灯了结键?: readonly string[],
+): 绿灯条目[] {
+  if (settings.运转?.拆分绿灯条目 === false) return [];
+  const 当前所在 = String(主角所在 ?? data.世界?.主角所在 ?? '').trim();
+  const 条目们: 绿灯条目[] = [];
+
+  for (const [名, 组织] of Object.entries(data.组织 ?? {})) {
+    const 键 = 名.trim();
+    if (!键 || !组织) continue;
+    const 正文 = 字段行(['目标', '负责人', '覆盖范围', '外部关系'], 组织 as unknown as Record<string, unknown>);
+    if (!正文) continue;
+    const 关键词 = Array.from(new Set([键, ...提取负责人关键词(组织.负责人 ?? '')]));
+    条目们.push({
+      角色: '组织',
+      键,
+      关键词,
+      内容: `[烟火 · 组织档案]\n组织：${键}\n${正文}`,
+    });
+  }
+
+  const 地区列 = [...(取层('地区').注入列 ?? []), '邻近地区'];
+  for (const [名, 地区] of Object.entries(data.地区 ?? {})) {
+    const 键 = 名.trim();
+    if (!键 || !地区 || 键 === 当前所在) continue;
+    const 正文 = 字段行(地区列, 地区 as unknown as Record<string, unknown>);
+    if (!正文) continue;
+    条目们.push({
+      角色: '地区',
+      键,
+      关键词: [键],
+      内容: `[烟火 · 地区档案]\n地区：${键}\n${正文}`,
+    });
+  }
+
+  const 摘要缓存 = (落选事件键 && 蓝灯了结键) ? null : 构建公开摘要(data, settings, { 主角所在: 当前所在 });
+  const 落选集合 = new Set(落选事件键 ?? 摘要缓存!.omittedIds);
+  const 蓝灯了结集合 = new Set(蓝灯了结键 ?? 摘要缓存!.了结Ids);
+  if (落选集合.size > 0) {
+    for (const event of data.事件 ?? []) {
+      if (event.公开性 !== '公开') continue;
+      if (!落选集合.has(事件键(event))) continue;
+      const 标题 = String(event.标题 ?? '').trim();
+      if (!标题) continue;
+      const 地点词 = String(event.地点 ?? '').trim();
+      const 组织词 = String(event.组织 ?? '').trim();
+      const 关键词 = Array.from(new Set([
+        标题,
+        // 跳过主角当前所在地，避免在本地对话时把所有落选本地事件一并激活
+        ...(地点词 && 地点词 !== 当前所在 ? [地点词] : []),
+        组织词,
+        ...提取负责人关键词(event.代表人物 ?? ''),
+      ].filter(w => w.length >= 2 && !关键词占位词.has(w))));
+      const 带背景 = !当前所在 || 属于本地(event, 当前所在);
+      条目们.push({
+        角色: '事态',
+        键: 事件键(event),
+        关键词: 关键词.length ? 关键词 : [标题],
+        内容: `[烟火 · 公开事态]\n${事件文本(event, 带背景)}`,
+      });
+    }
+  }
+
+  const 今 = 解析日期(data.世界?.时间 ?? '')?.天;
+  const 判定 = 判传播(settings.运转?.传播时滞 !== false, data.传讯速度, 当前所在, 今, data);
+  for (const event of data.已结束 ?? []) {
+    if (event.公开性 !== '公开' || !event.结束原因) continue;
+    const 键 = 事件键(event);
+    if (蓝灯了结集合.has(键)) continue;
+    const 天 = 距今天数(event.时间, 今);
+    if (天 != null && 天 > 了结注入窗口天数) continue;
+    if (判定.生效) {
+      const 此闻 = 推算所闻(event, 判定.上下文!);
+      if (!此闻.到达 || !此闻.最新) continue;
+    }
+    const 标题 = String(event.标题 ?? '').trim();
+    if (!标题) continue;
+    // 「往事」只用高专有性的标题与代表人物作关键词，不放泛地名与泛组织名，防止高频误触
+    const 关键词 = Array.from(new Set([
+      标题,
+      ...提取负责人关键词(event.代表人物 ?? ''),
+    ].filter(w => w.length >= 2 && !关键词占位词.has(w))));
+    条目们.push({
+      角色: '往事',
+      键,
+      关键词: 关键词.length ? 关键词 : [标题],
+      内容: `[烟火 · 往事结局]\n已结束事态「${标题}」的公开结果：\n${event.结束原因}`,
+    });
+  }
+
+  return 条目们;
+}
+
+export interface 天时氛围 {
+  图标: 'sun' | 'moon' | 'wind';
+  标签: string;
+}
+
+/** 纯确定性推算世界时间的季节与时段（0 token），无法解析时返回 null */
+export function 取天时氛围(时间文本: string): 天时氛围 | null {
+  const 文本 = String(时间文本 ?? '').trim();
+  if (!文本) return null;
+  const 月匹配 = /(?:年|\d{4}-)(\d{1,2})(?:月|-)/.exec(文本);
+  const 月 = 月匹配 ? Number(月匹配[1]) : NaN;
+  const 季 = 月 >= 3 && 月 <= 5 ? '春' : 月 >= 6 && 月 <= 8 ? '夏' : 月 >= 9 && 月 <= 11 ? '秋' : (月 === 12 || 月 === 1 || 月 === 2) ? '冬' : '';
+
+  const 时匹配 = /(?:^|[\s·T])(\d{1,2}):\d{2}/.exec(文本);
+  const 时 = 时匹配 ? Number(时匹配[1]) : NaN;
+  let 时段 = '';
+  let 图标: 'sun' | 'moon' | 'wind' = 'wind';
+  if (!Number.isNaN(时) && 时 >= 0 && 时 <= 23) {
+    if (时 >= 5 && 时 <= 7) { 时段 = '黎明'; 图标 = 'sun'; }
+    else if (时 >= 8 && 时 <= 11) { 时段 = '上午'; 图标 = 'sun'; }
+    else if (时 >= 12 && 时 <= 13) { 时段 = '正午'; 图标 = 'sun'; }
+    else if (时 >= 14 && 时 <= 17) { 时段 = '午后'; 图标 = 'sun'; }
+    else if (时 >= 18 && 时 <= 19) { 时段 = '黄昏'; 图标 = 'wind'; }
+    else { 时段 = '夜晚'; 图标 = 'moon'; }
+  }
+
+  const 标签 = [季, 时段].filter(Boolean).join(' · ');
+  return 标签 ? { 图标, 标签 } : null;
 }

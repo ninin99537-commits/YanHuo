@@ -99,10 +99,17 @@ export type 推进输入 = {
 // ("以上是用户的本轮输入，以下是<记忆回溯>的编码…"). 这两段都是**协议**, 不是剧情:
 // 模型正文里不该出现它们。口径是"删完整块", 不是"按关键词抹字"; 而且**未闭合就一个字都不动**
 // (不删前后正文, 也不删已闭合的块) + 告警要求拒绝本轮 —— 见 剥离回忆协议块。
-const 回溯块 = /<recall>([\s\S]*?)<\/recall>/g;
+const 回溯开标签 = /<recall(?:\s[^>]*)?>/gi;
+const 回溯闭标签 = /<\/recall>/gi;
+const 回溯块 = /<recall(?:\s[^>]*)?>([\s\S]*?)<\/recall>/gi;
 // 说明段**只从固定的协议开头**("以上是用户的本轮输入")起算: 以前前面挂着 `[^\n]*`,
 // 用户在协议同一行前面写的行动("他把信收好。以上是用户的本轮输入…")会被一起吞掉。
-const 说明段 = /以上是用户的本轮输入[\s\S]*?(?=<recall>)/g;
+const 说明段 = /以上是用户的本轮输入[\s\S]*?(?=<recall(?:\s[^>]*)?>)/gi;
+
+/** 文本是否带有记忆回溯协议特征（避免把普通预设/正文里偶发的 <recall> 当成记忆插件协议） */
+function 像回忆协议(文本: string): boolean {
+  return /AM\d+\s*\|/.test(文本) || 文本.includes('以上是用户的本轮输入') || 文本.includes('<记忆回溯>');
+}
 
 function 取文本(value: unknown): string {
   return typeof value === 'string' ? value : String(value ?? '');
@@ -124,8 +131,8 @@ function 取编码(文本: string): 回忆编码[] {
 
 /** 文本里有 `<recall>` 但没闭合(或闭合比开标签多): 只报告, 不猜 */
 function 有无闭合(文本: string): boolean {
-  const 开 = (文本.match(/<recall>/g) ?? []).length;
-  const 闭 = (文本.match(/<\/recall>/g) ?? []).length;
+  const 开 = (文本.match(回溯开标签) ?? []).length;
+  const 闭 = (文本.match(回溯闭标签) ?? []).length;
   return 开 !== 闭;
 }
 
@@ -137,7 +144,11 @@ function 有无闭合(文本: string): boolean {
  * 告警里也写清了要拒绝。取编码用的"块外截取"(见 提取回忆证据)只是协议解析, 不替代这里。
  */
 function 剥离回忆协议块(文本: string): string {
-  if (!文本.includes('<recall>'))
+  回溯开标签.lastIndex = 0;
+  if (!回溯开标签.test(文本))
+    return 文本;
+  回溯开标签.lastIndex = 0;
+  if (!像回忆协议(文本))
     return 文本;
   if (有无闭合(文本))
     return 文本;
@@ -154,11 +165,14 @@ function 剥离回忆协议块(文本: string): string {
  * 块外截取只用于**协议解析**, 不参与模型正文; 未闭合段之后的文字不参与提取 —— 宁可少认, 不拿残缺编码猜。
  */
 export function 提取回忆证据(楼层: number, 角色: string, 文本: string): 回忆证据 | null {
+  if (!像回忆协议(文本))
+    return null;
   const 块: string[] = [];
   for (const 匹配 of 文本.matchAll(回溯块))
     块.push(匹配[1]);
   const 剩余 = 文本.replace(回溯块, '');
-  const 未闭合位置 = 剩余.indexOf('<recall>');
+  const 未闭合匹配 = 剩余.match(/<recall(?:\s[^>]*)?>/i);
+  const 未闭合位置 = 未闭合匹配?.index ?? -1;
   const 块外 = 未闭合位置 >= 0 ? 剩余.slice(0, 未闭合位置) : 剩余;
   const 编码 = 取编码(`${块.join('\n')}\n${块外}`);
   const 未闭合 = 有无闭合(文本);
@@ -345,7 +359,7 @@ export function 收集推进输入(messages: readonly 推进消息[], options: �
       continue;
     recall.push(证据);
     if (证据.未闭合)
-      warnings.push(`楼层 #${楼层.message_id} 的 <recall> 未闭合：这一层原文完整保留、不做任何清理(不删前后正文, 也不删任何块)；请拒绝本轮, 不要把残缺协议喂给模型。`);
+      warnings.push(`楼层 #${楼层.message_id} 的 <recall> 未闭合：原文完整保留、不做协议清理，且已跳过该层时钟判定，正常继续推进。`);
     const 有码无时差 = /AM\d+\s*\|/.test(原文(楼层)) && 证据.编码.length === 0;
     if (有码无时差)
       warnings.push(`楼层 #${楼层.message_id} 的回忆块里有 AM 编码但缺少可解析的相对时差：未采纳(不猜残缺编码)。`);

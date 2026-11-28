@@ -92,7 +92,7 @@ export async function updateWorld(force = false): Promise<推进结果> {
       initialized: data.锚点楼层 >= 0, filter: createTextFilter(settings.标签),
     });
     if (!input.recent.length) return { 状态: '跳过', 说明: input.warnings.join('\n') };
-    if (input.recall.some(row => row.未闭合)) throw Error('本轮存在未闭合的回溯协议，完整原文保留但不发起模型请求；请修正协议后重试');
+    // 未闭合的 <recall> 降级处理：保留原文、跳过该层时钟判定并写入备注，不因第三方记忆插件或无关标签阻断整轮推进
     if (!input.latestReply.trim()) return { 状态: '跳过', 说明: '本轮过滤后没有完整有效正文' };
     inputOrigins = input.recent.map(row => 绑定楼层(row.message_id));
     const fingerprint = JSON.stringify([origin.楼层, origin.分支, input.recent.map(row => [row.message_id, row.原文]), input.context, input.recall]);
